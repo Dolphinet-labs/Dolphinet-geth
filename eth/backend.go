@@ -358,11 +358,24 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
-	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, config.RollupDisableTxPoolAdmission, eth, nil}
+	eth.APIBackend = &EthAPIBackend{extRPCEnabled: stack.Config().ExtRPCEnabled(), allowUnprotectedTxs: stack.Config().AllowUnprotectedTxs, disableTxPool: config.RollupDisableTxPoolAdmission, eth: eth}
 	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.Miner.GasPrice)
+
+	// TODO: config these
+	validatorContractAddr := common.Address{}
+	totalSupplyStorageAddr := common.Address{}
+	totalSupplyStorageSlot := common.Hash{}
+
+	eth.APIBackend.validatorChecker = core.NewContractValidatorChecker(validatorContractAddr)
+
+	eth.APIBackend.contractDeploymentFeeCalculator = core.NewContractDeploymentFeeCalculator(
+		big.NewInt(100),
+		totalSupplyStorageAddr,
+		totalSupplyStorageSlot,
+	)
 
 	if config.RollupSequencerHTTP != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/holiman/uint256"
 
 	gomath "math"
 	"math/big"
@@ -1697,10 +1698,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 		// Ensure only eip155 signed transactions are submitted if EIP155Required is set.
 		return common.Hash{}, errors.New("only replay-protected (EIP-155) transactions allowed over RPC")
 	}
-	if err := b.SendTx(ctx, tx); err != nil {
-		return common.Hash{}, err
-	}
-	// Print a log with full tx details for manual investigations and interventions
+
 	head := b.CurrentBlock()
 	signer := types.MakeSigner(b.ChainConfig(), head.Number, head.Time)
 	from, err := types.Sender(signer, tx)
@@ -1708,6 +1706,52 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 		return common.Hash{}, err
 	}
 
+	if tx.To() == nil {
+		lState, header, err := b.StateAndHeaderByNumber(ctx, rpc.LatestBlockNumber)
+		if err != nil {
+			return common.Hash{}, fmt.Errorf("failed to get state: %w", err)
+		}
+
+		blockCtx := core.NewEVMBlockContext(header, NewChainContext(ctx, b), nil, b.ChainConfig(), lState)
+
+		vmConfig := vm.Config{}
+		evm := b.GetEVM(ctx, lState, header, &vmConfig, &blockCtx)
+
+		validatorChecker := b.ValidatorChecker()
+		if validatorChecker != nil && !validatorChecker.IsValidator(from, evm) {
+			feeCalculator := b.ContractDeploymentFeeCalculator()
+			if feeCalculator != nil {
+				totalSupply := feeCalculator.GetTotalSupply(evm)
+				if totalSupply.Sign() > 0 {
+					extraFee := feeCalculator.CalculateFee(totalSupply)
+					feeReceiver := feeCalculator.GetFeeReceiver()
+
+					log.Info("Non-validator contract deployment detected, adding extra fee",
+						"from", from.Hex(),
+						"extraFee", extraFee,
+						"totalSupply", totalSupply,
+						"feeReceiver", feeReceiver.Hex())
+
+					balance := lState.GetBalance(from)
+					totalCost := new(big.Int).Add(tx.Cost(), extraFee)
+					totalCostU, _ := uint256.FromBig(totalCost)
+					if balance.Cmp(totalCostU) < 0 {
+						return common.Hash{}, fmt.Errorf(
+							"insufficient funds for contract deployment fee: balance %v, required %v (base cost %v + extra fee %v)",
+							balance, totalCost, tx.Cost(), extraFee,
+						)
+					}
+					log.Info("Contract deployment fee will be charged", "extraFee", extraFee, "from", from.Hex())
+				}
+			}
+		}
+	}
+
+	if err := b.SendTx(ctx, tx); err != nil {
+		return common.Hash{}, err
+	}
+
+	// Print a log with full tx details for manual investigations and interventions
 	if tx.To() == nil {
 		addr := crypto.CreateAddress(from, tx.Nonce())
 		log.Info("Submitted contract creation", "hash", tx.Hash().Hex(), "from", from, "nonce", tx.Nonce(), "contract", addr.Hex(), "value", tx.Value())

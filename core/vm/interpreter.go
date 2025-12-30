@@ -18,6 +18,7 @@ package vm
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -44,6 +45,17 @@ type Config struct {
 	PrecompileOverrides PrecompileOverrides                   // Precompiles can be swapped / changed / wrapped as needed
 	NoMaxCodeSize       bool                                  // Ignore Max code size and max init code size limits
 	CallerOverride      func(v common.Address) common.Address // Swap the caller as needed, for VM prank functionality.
+
+	// Contract deployment fee configuration
+	// These are set from core package types
+	ValidatorChecker interface {
+		IsValidator(common.Address, *EVM) bool
+	}
+	ContractDeploymentFeeCalculator interface {
+		GetTotalSupply(*EVM) *big.Int
+		CalculateFee(*big.Int) *big.Int
+		GetFeeReceiver() common.Address
+	}
 }
 
 // ScopeContext contains the things that are per-call, such as stack and memory,

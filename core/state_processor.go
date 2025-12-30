@@ -158,6 +158,12 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 		nonce = statedb.GetNonce(msg.From)
 	}
 
+	if msg.To == nil {
+		if err := chargeContractDeploymentFeeIfNeeded(evm, msg.From, statedb); err != nil {
+			return nil, fmt.Errorf("contract deployment fee charge failed: %w", err)
+		}
+	}
+
 	// Apply the transaction to the current state (included in the env).
 	result, err := ApplyMessage(evm, msg, gp)
 	if err != nil {
