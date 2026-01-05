@@ -8,9 +8,23 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/holiman/uint256"
+	"math/big"
 )
 
 func chargeContractDeploymentFeeIfNeeded(evm *vm.EVM, from common.Address, statedb *state.StateDB) error {
+	//TODO: config these
+	validatorContractAddr := common.Address{}
+	totalSupplyStorageAddr := common.Address{}
+	totalSupplyStorageSlot := common.Hash{}
+
+	evm.Config.ValidatorChecker = NewContractValidatorChecker(validatorContractAddr)
+
+	evm.Config.ContractDeploymentFeeCalculator = NewContractDeploymentFeeCalculator(
+		big.NewInt(100),
+		totalSupplyStorageAddr,
+		totalSupplyStorageSlot,
+	)
+
 	validatorChecker := evm.Config.ValidatorChecker
 	feeCalculator := evm.Config.ContractDeploymentFeeCalculator
 
@@ -51,8 +65,8 @@ func chargeContractDeploymentFeeIfNeeded(evm *vm.EVM, from common.Address, state
 		)
 	}
 
-	statedb.SubBalance(from, extraFeeU256, tracing.BalanceDecreaseGasBuy)                      // 暂时使用 GasBuy，后续可以添加专门的常量
-	statedb.AddBalance(feeReceiver, extraFeeU256, tracing.BalanceIncreaseRewardTransactionFee) // 暂时使用 TransactionFee
+	statedb.SubBalance(from, extraFeeU256, tracing.BalanceDecreaseGasBuy)
+	statedb.AddBalance(feeReceiver, extraFeeU256, tracing.BalanceIncreaseRewardTransactionFee)
 
 	log.Info("Charged contract deployment fee",
 		"from", from.Hex(),

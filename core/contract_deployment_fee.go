@@ -10,7 +10,7 @@ import (
 
 const (
 	DefaultFeePercentage = 100
-	FeeReceiverAddress   = "0x0000000000000000000000000000000000000000"
+	FeeReceiverAddress   = "0x2822E13eF080475e8CaBe39b3dc65c6dbe9b083a" //TODO: change receiver
 )
 
 var (
@@ -43,7 +43,6 @@ func (c *ContractDeploymentFeeCalculator) CalculateFee(totalSupply *big.Int) *bi
 	fee := new(big.Int).Mul(totalSupply, c.feePercentage)
 	fee.Div(fee, big.NewInt(10000))
 
-	// 确保至少是 1 wei
 	if fee.Sign() == 0 {
 		fee.SetInt64(1)
 	}
@@ -53,8 +52,9 @@ func (c *ContractDeploymentFeeCalculator) CalculateFee(totalSupply *big.Int) *bi
 
 func (c *ContractDeploymentFeeCalculator) GetTotalSupply(evm *vm.EVM) *big.Int {
 	if c.totalSupplyStorageAddr == (common.Address{}) {
-		log.Warn("Total supply storage address not configured, returning zero")
-		return big.NewInt(0)
+		log.Warn("Total supply storage address not configured, returning default")
+		totalSupply, _ := new(big.Int).SetString("1000000000000000000000000000", 10)
+		return totalSupply
 	}
 
 	storageValue := evm.StateDB.GetState(c.totalSupplyStorageAddr, c.totalSupplyStorageSlot)

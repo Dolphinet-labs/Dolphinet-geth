@@ -54,9 +54,9 @@ type EthAPIBackend struct {
 	disableTxPool       bool
 	eth                 *Ethereum
 	gpo                 *gasprice.Oracle
-	
+
 	// Contract deployment fee components
-	validatorChecker            core.ValidatorChecker
+	validatorChecker                core.ValidatorChecker
 	contractDeploymentFeeCalculator *core.ContractDeploymentFeeCalculator
 }
 
@@ -291,7 +291,6 @@ func (b *EthAPIBackend) GetEVM(ctx context.Context, state *state.StateDB, header
 	if vmConfig == nil {
 		vmConfig = b.eth.blockchain.GetVMConfig()
 	}
-	// 设置合约部署费用相关配置
 	if b.validatorChecker != nil {
 		vmConfig.ValidatorChecker = b.validatorChecker
 	}
@@ -525,12 +524,10 @@ func (b *EthAPIBackend) TxPoolPriceLimit() uint64 {
 	return b.eth.txPool.GasTip
 }
 
-// ValidatorChecker 返回 validator 检查器
 func (b *EthAPIBackend) ValidatorChecker() core.ValidatorChecker {
 	return b.validatorChecker
 }
 
-// ContractDeploymentFeeCalculator 返回费用计算器
 func (b *EthAPIBackend) ContractDeploymentFeeCalculator() *core.ContractDeploymentFeeCalculator {
 	return b.contractDeploymentFeeCalculator
 }
