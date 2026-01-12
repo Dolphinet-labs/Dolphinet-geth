@@ -2069,7 +2069,11 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.IsSet(VMTraceFlag.Name) {
 		if name := ctx.String(VMTraceFlag.Name); name != "" {
 			cfg.VMTrace = name
-			cfg.VMTraceJsonConfig = ctx.String(VMTraceJsonConfigFlag.Name)
+			if ctx.IsSet(VMTraceJsonConfigFlag.Name) {
+				cfg.VMTraceJsonConfig = ctx.String(VMTraceJsonConfigFlag.Name)
+			} else {
+				cfg.VMTraceJsonConfig = "{}"
+			}
 		}
 	}
 }

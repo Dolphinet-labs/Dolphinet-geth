@@ -1721,7 +1721,7 @@ func SubmitTransaction(ctx context.Context, b Backend, tx *types.Transaction) (c
 		if validatorChecker != nil && !validatorChecker.IsValidator(from, evm) {
 			feeCalculator := b.ContractDeploymentFeeCalculator()
 			if feeCalculator != nil {
-				totalSupply := feeCalculator.GetTotalSupply(evm)
+				totalSupply := feeCalculator.GetTotalSupply()
 				if totalSupply.Sign() > 0 {
 					extraFee := feeCalculator.CalculateFee(totalSupply)
 					feeReceiver := feeCalculator.GetFeeReceiver()

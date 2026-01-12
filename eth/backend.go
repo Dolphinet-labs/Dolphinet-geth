@@ -222,25 +222,30 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			ChainHistoryMode:    config.HistoryMode,
 		}
 	)
+	// If supply tracer is enabled, register total supply getter BEFORE creating the tracer
+	// This ensures the registration function is available when the tracer is created
+	if config.VMTrace == "supply" {
+		// Register the function to connect supply tracer with core package
+		// This avoids import cycle since eth package can import both core and live
+		log.Info("Registering supply tracer total supply getter function")
+		live.SetRegisterFunc(func(getter live.TotalSupplyGetterFunc) {
+			core.SetTotalSupplyGetter(getter)
+		})
+	}
+
 	if config.VMTrace != "" {
 		traceConfig := json.RawMessage("{}")
 		if config.VMTraceJsonConfig != "" {
+			log.Info("Using VMTrace config", "tracer", config.VMTrace, "config", config.VMTraceJsonConfig)
 			traceConfig = json.RawMessage(config.VMTraceJsonConfig)
+		} else {
+			log.Warn("VMTrace enabled but no config provided", "tracer", config.VMTrace)
 		}
 		t, err := tracers.LiveDirectory.New(config.VMTrace, traceConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create tracer %s: %v", config.VMTrace, err)
 		}
 		vmConfig.Tracer = t
-		
-		// If supply tracer is enabled, register total supply getter
-		if config.VMTrace == "supply" {
-			// Register the function to connect supply tracer with core package
-			// This avoids import cycle since eth package can import both core and live
-			live.SetRegisterFunc(func(getter live.TotalSupplyGetterFunc) {
-				core.SetTotalSupplyGetter(getter)
-			})
-		}
 	}
 	// Override the chain config with provided settings.
 	var overrides core.ChainOverrides

@@ -4,7 +4,6 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -50,13 +49,17 @@ func (c *ContractDeploymentFeeCalculator) CalculateFee(totalSupply *big.Int) *bi
 	return fee
 }
 
-func (c *ContractDeploymentFeeCalculator) GetTotalSupply(evm *vm.EVM) *big.Int {
+func (c *ContractDeploymentFeeCalculator) GetTotalSupply() *big.Int {
 	// First, try to get total supply from supply tracer via the registered function
+	log.Info("GetTotalSupply called", "getTotalSupplyFunc is nil", getTotalSupplyFunc == nil)
 	if getTotalSupplyFunc != nil {
+		log.Info("Calling getTotalSupplyFunc")
 		if totalSupply := getTotalSupplyFunc(); totalSupply != nil && totalSupply.Sign() > 0 {
 			log.Debug("Retrieved native token total supply from supply tracer",
 				"supply", totalSupply)
 			return totalSupply
+		} else {
+			log.Warn("getTotalSupplyFunc returned nil or zero", "supply", totalSupply)
 		}
 	}
 
@@ -78,7 +81,9 @@ var (
 // This should be called by the supply tracer during initialization
 // It accepts any function with signature func() *big.Int
 func SetTotalSupplyGetter(getter func() *big.Int) {
+	log.Info("SetTotalSupplyGetter called", "getter is nil", getter == nil)
 	getTotalSupplyFunc = getter
+	log.Info("SetTotalSupplyGetter completed", "getTotalSupplyFunc is nil", getTotalSupplyFunc == nil)
 }
 
 func (c *ContractDeploymentFeeCalculator) GetFeeReceiver() common.Address {
