@@ -36,8 +36,12 @@ func decodeAddressArray(data []byte) ([]common.Address, error) {
 	}
 
 	offset := binary.BigEndian.Uint64(data[24:32])
-	if offset > uint64(len(data)) {
-		return nil, fmt.Errorf("offset out of bounds: %d > %d", offset, len(data))
+	// Offset should be at least 32 (pointing to data after the offset field)
+	if offset < 32 {
+		return nil, fmt.Errorf("offset out of bounds: %d < 32", offset)
+	}
+	if offset >= uint64(len(data)) {
+		return nil, fmt.Errorf("offset out of bounds: %d >= %d", offset, len(data))
 	}
 
 	if offset+32 > uint64(len(data)) {

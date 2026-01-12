@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math/big"
 	"path/filepath"
+	"sync"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -85,7 +86,15 @@ type supplyTracer struct {
 	txCallstack []supplyTxCallstack // Callstack for current transaction
 	logger      *lumberjack.Logger
 	chainConfig *params.ChainConfig
+	totalSupply *big.Int // Cumulative total supply
+	mu          sync.RWMutex
 }
+
+// supplyTracerRegistry stores active supply tracers for access
+var (
+	supplyTracerRegistry = make(map[*supplyTracer]bool)
+	supplyTracerMu       sync.RWMutex
+)
 
 type supplyTracerConfig struct {
 	Path    string `json:"path"`    // Path to the directory where the tracer logs will be stored
@@ -110,9 +119,24 @@ func newSupplyTracer(cfg json.RawMessage) (*tracing.Hooks, error) {
 	}
 
 	t := &supplyTracer{
-		delta:  newSupplyInfo(),
-		logger: logger,
+		delta:       newSupplyInfo(),
+		logger:      logger,
+		totalSupply: big.NewInt(0),
 	}
+
+	// Register tracer for access
+	supplyTracerMu.Lock()
+	supplyTracerRegistry[t] = true
+	supplyTracerMu.Unlock()
+
+	// Register total supply getter function
+	// This will be set by the caller to avoid import cycle
+	if registerTotalSupplyGetter != nil {
+		registerTotalSupplyGetter(func() *big.Int {
+			return t.GetTotalSupply()
+		})
+	}
+
 	return &tracing.Hooks{
 		OnBlockchainInit: t.onBlockchainInit,
 		OnBlockStart:     t.onBlockStart,
@@ -177,6 +201,36 @@ func (s *supplyTracer) onBlockStart(ev tracing.BlockEvent) {
 
 func (s *supplyTracer) onBlockEnd(err error) {
 	s.write(s.delta)
+
+	// Update cumulative total supply
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Add issuance
+	if s.delta.Issuance != nil {
+		if s.delta.Issuance.GenesisAlloc != nil {
+			s.totalSupply.Add(s.totalSupply, s.delta.Issuance.GenesisAlloc)
+		}
+		if s.delta.Issuance.Reward != nil {
+			s.totalSupply.Add(s.totalSupply, s.delta.Issuance.Reward)
+		}
+		if s.delta.Issuance.Withdrawals != nil {
+			s.totalSupply.Add(s.totalSupply, s.delta.Issuance.Withdrawals)
+		}
+	}
+
+	// Subtract burn
+	if s.delta.Burn != nil {
+		if s.delta.Burn.EIP1559 != nil {
+			s.totalSupply.Sub(s.totalSupply, s.delta.Burn.EIP1559)
+		}
+		if s.delta.Burn.Blob != nil {
+			s.totalSupply.Sub(s.totalSupply, s.delta.Burn.Blob)
+		}
+		if s.delta.Burn.Misc != nil {
+			s.totalSupply.Sub(s.totalSupply, s.delta.Burn.Misc)
+		}
+	}
 }
 
 func (s *supplyTracer) onGenesisBlock(b *types.Block, alloc types.GenesisAlloc) {
@@ -279,6 +333,35 @@ func (s *supplyTracer) onClose() {
 	if err := s.logger.Close(); err != nil {
 		log.Warn("failed to close supply tracer log file", "error", err)
 	}
+
+	// Unregister tracer
+	supplyTracerMu.Lock()
+	delete(supplyTracerRegistry, s)
+	supplyTracerMu.Unlock()
+}
+
+// GetTotalSupply returns the cumulative total supply from the supply tracer
+func (s *supplyTracer) GetTotalSupply() *big.Int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return new(big.Int).Set(s.totalSupply)
+}
+
+// TotalSupplyGetterFunc is a function type for getting total supply
+type TotalSupplyGetterFunc func() *big.Int
+
+// RegisterFunc is a function type for registering total supply getter
+type RegisterFunc func(TotalSupplyGetterFunc)
+
+var (
+	registerTotalSupplyGetter RegisterFunc
+)
+
+// SetRegisterFunc sets the function to register total supply getter
+// This should be called from a package that can import both core and live packages
+// to avoid import cycle
+func SetRegisterFunc(fn RegisterFunc) {
+	registerTotalSupplyGetter = fn
 }
 
 func (s *supplyTracer) write(data any) {

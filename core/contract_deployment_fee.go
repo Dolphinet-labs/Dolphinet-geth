@@ -51,30 +51,34 @@ func (c *ContractDeploymentFeeCalculator) CalculateFee(totalSupply *big.Int) *bi
 }
 
 func (c *ContractDeploymentFeeCalculator) GetTotalSupply(evm *vm.EVM) *big.Int {
-	if c.totalSupplyStorageAddr == (common.Address{}) {
-		log.Warn("Total supply storage address not configured, returning default")
-		totalSupply, _ := new(big.Int).SetString("1000000000000000000000000000", 10)
-		return totalSupply
+	// First, try to get total supply from supply tracer via the registered function
+	if getTotalSupplyFunc != nil {
+		if totalSupply := getTotalSupplyFunc(); totalSupply != nil && totalSupply.Sign() > 0 {
+			log.Debug("Retrieved native token total supply from supply tracer",
+				"supply", totalSupply)
+			return totalSupply
+		}
 	}
 
-	storageValue := evm.StateDB.GetState(c.totalSupplyStorageAddr, c.totalSupplyStorageSlot)
+	// Last resort: return default value
+	log.Warn("Total supply not available from supply tracer or storage, returning default")
+	totalSupply, _ := new(big.Int).SetString("1000000000000000000000000000", 10)
+	return totalSupply
+}
 
-	supply := new(big.Int).SetBytes(storageValue[:])
+// TotalSupplyGetter is a function type for getting total supply
+// This matches live.TotalSupplyGetterFunc to avoid type conversion
+type TotalSupplyGetter func() *big.Int
 
-	if supply.Sign() <= 0 {
-		log.Warn("Total supply is zero or negative",
-			"address", c.totalSupplyStorageAddr.Hex(),
-			"slot", c.totalSupplyStorageSlot.Hex(),
-			"value", supply)
-		return big.NewInt(0)
-	}
+var (
+	getTotalSupplyFunc TotalSupplyGetter
+)
 
-	log.Debug("Retrieved native token total supply from storage",
-		"supply", supply,
-		"address", c.totalSupplyStorageAddr.Hex(),
-		"slot", c.totalSupplyStorageSlot.Hex())
-
-	return supply
+// SetTotalSupplyGetter sets the function to get total supply from supply tracer
+// This should be called by the supply tracer during initialization
+// It accepts any function with signature func() *big.Int
+func SetTotalSupplyGetter(getter func() *big.Int) {
+	getTotalSupplyFunc = getter
 }
 
 func (c *ContractDeploymentFeeCalculator) GetFeeReceiver() common.Address {

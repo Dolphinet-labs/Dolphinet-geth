@@ -2,32 +2,20 @@ package core
 
 import (
 	"fmt"
+
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/holiman/uint256"
-	"math/big"
 )
 
 func chargeContractDeploymentFeeIfNeeded(evm *vm.EVM, from common.Address, statedb *state.StateDB) error {
-	//TODO: config these
-	validatorContractAddr := common.Address{}
-	totalSupplyStorageAddr := common.Address{}
-	totalSupplyStorageSlot := common.Hash{}
-
-	evm.Config.ValidatorChecker = NewContractValidatorChecker(validatorContractAddr)
-
-	evm.Config.ContractDeploymentFeeCalculator = NewContractDeploymentFeeCalculator(
-		big.NewInt(100),
-		totalSupplyStorageAddr,
-		totalSupplyStorageSlot,
-	)
-
 	validatorChecker := evm.Config.ValidatorChecker
 	feeCalculator := evm.Config.ContractDeploymentFeeCalculator
 
+	// If either is nil, skip fee charging (allows tests to disable by passing nil)
 	if validatorChecker == nil || feeCalculator == nil {
 		return nil
 	}

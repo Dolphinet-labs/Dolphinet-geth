@@ -47,6 +47,7 @@ import (
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/eth/tracers/live"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
@@ -231,6 +232,15 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return nil, fmt.Errorf("failed to create tracer %s: %v", config.VMTrace, err)
 		}
 		vmConfig.Tracer = t
+		
+		// If supply tracer is enabled, register total supply getter
+		if config.VMTrace == "supply" {
+			// Register the function to connect supply tracer with core package
+			// This avoids import cycle since eth package can import both core and live
+			live.SetRegisterFunc(func(getter live.TotalSupplyGetterFunc) {
+				core.SetTotalSupplyGetter(getter)
+			})
+		}
 	}
 	// Override the chain config with provided settings.
 	var overrides core.ChainOverrides
