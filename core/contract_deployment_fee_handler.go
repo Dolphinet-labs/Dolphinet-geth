@@ -26,7 +26,7 @@ func chargeContractDeploymentFeeIfNeeded(evm *vm.EVM, from common.Address, state
 		return nil
 	}
 
-	totalSupply := feeCalculator.GetTotalSupply(evm)
+	totalSupply := feeCalculator.GetTotalSupply()
 	if totalSupply == nil || totalSupply.Sign() <= 0 {
 		log.Warn("Failed to get total supply, skipping contract deployment fee", "from", from.Hex())
 		return nil

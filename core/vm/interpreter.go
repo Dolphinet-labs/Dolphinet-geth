@@ -52,7 +52,7 @@ type Config struct {
 		IsValidator(common.Address, *EVM) bool
 	}
 	ContractDeploymentFeeCalculator interface {
-		GetTotalSupply(*EVM) *big.Int
+		GetTotalSupply() *big.Int
 		CalculateFee(*big.Int) *big.Int
 		GetFeeReceiver() common.Address
 	}
