@@ -110,6 +110,7 @@ type Ethereum struct {
 	// OP-Stack additions
 	seqRPCService        *rpc.Client
 	historicalRPCService *rpc.Client
+	nodeRPCService       *rpc.Client // RPC client to dn-node for P2P transaction forwarding
 
 	interopRPC *interop.InteropClient
 
@@ -414,6 +415,16 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	if config.InteropMessageRPC != "" {
 		eth.interopRPC = interop.NewInteropClient(config.InteropMessageRPC)
+	}
+
+	if config.RollupNodeRPC != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := rpc.DialContext(ctx, config.RollupNodeRPC)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		eth.nodeRPCService = client
 	}
 
 	// Start the RPC service

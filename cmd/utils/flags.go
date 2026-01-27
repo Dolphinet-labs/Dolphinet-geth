@@ -942,6 +942,18 @@ var (
 	}
 
 	// Rollup Flags
+	PosEnabledFlag = &cli.BoolFlag{
+		Name:     "pos.geth",
+		Usage:    "Enable pos geth mode",
+		Value:    false,
+		Category: flags.RollupCategory,
+	}
+	RollupNodeRPCFlag = &cli.StringFlag{
+		Name:     "rollup.noderpc",
+		Usage:    "RPC endpoint for dn-node (for P2P transaction forwarding in PoS mode)",
+		Category: flags.RollupCategory,
+	}
+
 	RollupSequencerHTTPFlag = &cli.StringFlag{
 		Name:     "rollup.sequencerhttp",
 		Usage:    "HTTP endpoint for the sequencer mempool",
@@ -1915,6 +1927,11 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Only configure sequencer http flag if we're running in verifier mode i.e. --mine is disabled.
 	if ctx.IsSet(RollupSequencerHTTPFlag.Name) && !ctx.IsSet(MiningEnabledFlag.Name) {
 		cfg.RollupSequencerHTTP = ctx.String(RollupSequencerHTTPFlag.Name)
+	}
+	if ctx.Bool(PosEnabledFlag.Name) {
+		if ctx.IsSet(RollupNodeRPCFlag.Name) {
+			cfg.RollupNodeRPC = ctx.String(RollupNodeRPCFlag.Name)
+		}
 	}
 	if ctx.IsSet(RollupHistoricalRPCFlag.Name) {
 		cfg.RollupHistoricalRPC = ctx.String(RollupHistoricalRPCFlag.Name)

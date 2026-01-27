@@ -188,6 +188,7 @@ type Config struct {
 	RollupSequencerTxConditionalCostRateLimit int
 	RollupHistoricalRPC                       string
 	RollupHistoricalRPCTimeout                time.Duration
+	RollupNodeRPC                             string `toml:",omitempty"`
 	RollupDisableTxPoolGossip                 bool
 	RollupDisableTxPoolAdmission              bool
 	RollupHaltOnIncompatibleProtocolVersion   string

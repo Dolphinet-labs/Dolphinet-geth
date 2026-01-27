@@ -327,8 +327,33 @@ func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction)
 		return types.ErrTxTypeNotSupported
 	}
 
-	// OP-Stack: forward to remote sequencer RPC
-	if b.eth.seqRPCService != nil {
+	if b.eth.txPool != nil {
+		if existingTx := b.eth.txPool.Get(signedTx.Hash()); existingTx != nil {
+			log.Debug("Transaction already in txpool", "hash", signedTx.Hash())
+			return nil
+		}
+	}
+
+	if b.eth.nodeRPCService != nil {
+		if !b.disableTxPool {
+			if err := b.sendTx(ctx, signedTx); err != nil {
+				log.Warn("Failed to add transaction to txpool", "hash", signedTx.Hash(), "err", err)
+			}
+		}
+
+		txData, err := signedTx.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		txHex := hexutil.Encode(txData)
+		if err := b.eth.nodeRPCService.CallContext(ctx, nil, "opnode_publishTransactions", []string{txHex}); err != nil {
+			log.Warn("Failed to forward transaction via dn-node", "hash", signedTx.Hash(), "err", err)
+			return err
+		}
+		log.Debug("Forwarded transaction via dn-node", "hash", signedTx.Hash())
+		return nil
+	} else if b.eth.seqRPCService != nil {
+		// Legacy RPC forwarding mode (for non-PoS or old configuration)
 		data, err := signedTx.MarshalBinary()
 		if err != nil {
 			return err
