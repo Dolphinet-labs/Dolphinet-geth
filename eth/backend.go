@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -425,6 +426,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			return nil, err
 		}
 		eth.nodeRPCService = client
+		// Set nodeRPCService in the consensus engine so it can query validator addresses
+		if beaconEngine, ok := engine.(*beacon.Beacon); ok {
+			beaconEngine.SetNodeRPCService(client)
+		}
 	}
 
 	// Start the RPC service

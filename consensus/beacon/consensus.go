@@ -17,11 +17,15 @@
 package beacon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/big"
 
+	"github.com/ethereum/go-ethereum/log"
+
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -38,7 +42,49 @@ import (
 var (
 	beaconDifficulty = common.Big0          // The default block difficulty in the beacon consensus
 	beaconNonce      = types.EncodeNonce(0) // The default block nonce in the beacon consensus
+
+	// Dolphinet block reward for PoS validator (native DOL, in wei).
+	//   - 3,000,000 DOL per year to validators
+	//   - 2s per block => 15,768,000 blocks per year
+	//   - rewardPerBlock = 3_000_000 / 15_768_000 ~= 0.1902587519025875 DOL
+	//   - 0.1902587519025875 * 1e18 = 190258751902587500 wei
+	dolphinetBlockReward = func() *uint256.Int {
+		v, ok := new(big.Int).SetString("190258751902587500", 10)
+		if !ok {
+			return nil
+		}
+		return uint256.MustFromBig(v)
+	}()
+
+	// validatorAddressExtraOffset is the offset in header.Extra where the validator address is stored.
+	// The validator address (20 bytes) is stored at the end of Extra (last 20 bytes).
+	// MaximumExtraDataSize is 32 bytes, so we use the last 20 bytes for validator address.
+	validatorAddressExtraOffset = 12 // 32 - 20 = 12
 )
+
+func encodeValidatorAddressToExtra(header *types.Header, validatorAddr common.Address) {
+	originalLen := len(header.Extra)
+	if len(header.Extra) != int(params.MaximumExtraDataSize) {
+		extra := make([]byte, params.MaximumExtraDataSize)
+		if len(header.Extra) > 0 {
+			copy(extra, header.Extra)
+		}
+		header.Extra = extra
+		log.Debug("encodeValidatorAddressToExtra: extended Extra", "original_len", originalLen, "new_len", len(header.Extra))
+	}
+	copy(header.Extra[validatorAddressExtraOffset:], validatorAddr[:])
+	log.Debug("Encoded validator address to Extra", "extra_len", len(header.Extra), "offset", validatorAddressExtraOffset, "validator", validatorAddr, "original_len", originalLen)
+}
+
+func decodeValidatorAddressFromExtra(header *types.Header) common.Address {
+	if len(header.Extra) < int(params.MaximumExtraDataSize) {
+		log.Debug("Extra too short to contain validator address", "extra_len", len(header.Extra), "required", params.MaximumExtraDataSize)
+		return common.Address{}
+	}
+	var validatorAddr common.Address
+	copy(validatorAddr[:], header.Extra[validatorAddressExtraOffset:])
+	return validatorAddr
+}
 
 // Various error messages to mark blocks invalid. These should be private to
 // prevent engine specific errors from being referenced in the remainder of the
@@ -61,7 +107,8 @@ var (
 // engine implements the consensus interface (except the beacon itself).
 type Beacon struct {
 	// For migrated OP chains (OP mainnet, OP Goerli), ethone is a dummy legacy pre-Bedrock consensus
-	ethone consensus.Engine // Original consensus engine used in eth1, e.g. ethash or clique
+	ethone         consensus.Engine // Original consensus engine used in eth1, e.g. ethash or clique
+	nodeRPCService *rpc.Client
 }
 
 // New creates a consensus engine with the given embedded eth1 engine.
@@ -70,6 +117,10 @@ func New(ethone consensus.Engine) *Beacon {
 		panic("nested consensus engine")
 	}
 	return &Beacon{ethone: ethone}
+}
+
+func (beacon *Beacon) SetNodeRPCService(client *rpc.Client) {
+	beacon.nodeRPCService = client
 }
 
 // isPostMerge reports whether the given block number is assumed to be post-merge.
@@ -364,7 +415,15 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 		amount = amount.Mul(amount, uint256.NewInt(params.DOLGWei))
 		state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
 	}
-	// No block reward which is issued by consensus layer instead.
+
+	blockNumber := header.Number.Uint64()
+	var validatorAddr common.Address
+
+	validatorAddr = decodeValidatorAddressFromExtra(header)
+	if validatorAddr != (common.Address{}) {
+		state.AddBalance(validatorAddr, dolphinetBlockReward, tracing.BalanceIncreaseRewardMineBlock)
+		log.Debug("Block reward paid to validator", "block_number", blockNumber, "validator", validatorAddr)
+	}
 }
 
 // FinalizeAndAssemble implements consensus.Engine, setting the final state and
@@ -384,6 +443,28 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 			return nil, errors.New("withdrawals set before Shanghai activation")
 		}
 	}
+
+	blockNumber := header.Number.Uint64()
+	var validatorAddr common.Address
+	encodeValidatorAddressToExtra(header, validatorAddr)
+	if beacon.nodeRPCService != nil {
+		ctx := context.Background()
+		blockNumberHex := hexutil.Uint64(blockNumber)
+		err := beacon.nodeRPCService.CallContext(ctx, &validatorAddr, "opnode_getValidatorForBlock", blockNumberHex)
+		if err == nil && validatorAddr != (common.Address{}) {
+			encodeValidatorAddressToExtra(header, validatorAddr)
+			log.Debug("Set validator address in header.Extra", "block_number", blockNumber, "validator", validatorAddr)
+		} else if err != nil {
+			log.Warn("Failed to get validator address from dn-node in FinalizeAndAssemble", "block_number", blockNumber, "err", err)
+			encodeValidatorAddressToExtra(header, common.Address{})
+		} else {
+			encodeValidatorAddressToExtra(header, common.Address{})
+		}
+	} else {
+		encodeValidatorAddressToExtra(header, common.Address{})
+		log.Debug("nodeRPCService is nil, setting Extra to 32 bytes without validator address", "block_number", blockNumber)
+	}
+
 	// Finalize and assemble the block.
 	beacon.Finalize(chain, header, state, body)
 
