@@ -432,6 +432,19 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		}
 	}
 
+	if config.RollupSequencerHTTP != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := rpc.DialContext(ctx, config.RollupSequencerHTTP)
+		cancel()
+		if err != nil {
+			log.Warn("Failed to connect to validator RPC", "endpoint", config.RollupSequencerHTTP, "err", err)
+		} else {
+			if beaconEngine, ok := engine.(*beacon.Beacon); ok {
+				beaconEngine.SetPeerRPCService(client)
+			}
+		}
+	}
+
 	// Start the RPC service
 	eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, networkID)
 

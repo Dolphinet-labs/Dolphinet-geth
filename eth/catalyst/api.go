@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -180,6 +181,17 @@ func newConsensusAPIWithoutHeartbeat(eth *eth.Ethereum) *ConsensusAPI {
 	}
 	eth.Downloader().SetBadBlockCallback(api.setInvalidAncestor)
 	return api
+}
+
+func (api *ConsensusAPI) SetVoteRewards(blockNumber hexutil.Uint64, rewards []map[string]interface{}) error {
+	engine := api.eth.BlockChain().Engine()
+	beacon, ok := engine.(*beacon.Beacon)
+	if !ok {
+		return errors.New("consensus engine is not beacon")
+	}
+
+	beacon.SetVoteRewards(uint64(blockNumber), rewards)
+	return nil
 }
 
 // ForkchoiceUpdatedV1 has several responsibilities:
