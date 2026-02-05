@@ -179,11 +179,7 @@ func (beacon *Beacon) SetVoteRewards(blockNumber uint64, rewardsData interface{}
 
 	beacon.voteRewardsMu.Lock()
 	defer beacon.voteRewardsMu.Unlock()
-	for oldBlockNum := range beacon.voteRewards {
-		delete(beacon.voteRewards, oldBlockNum)
-	}
 
-	delete(beacon.appliedVoteRewards, blockNumber)
 	beacon.voteRewards[blockNumber] = rewards
 	log.Info("Set vote rewards for block", "block_number", blockNumber, "count", len(rewards))
 	for i, r := range rewards {
@@ -531,6 +527,30 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 		if !isFromFinalizeAndAssemble {
 			beacon.appliedVoteRewards[blockNumber] = true
 		}
+
+		if isFromFinalizeAndAssemble {
+			const keepRecentBlocks = 100
+			var keepFromBlock uint64 = 0
+			if blockNumber > keepRecentBlocks {
+				keepFromBlock = blockNumber - keepRecentBlocks
+			}
+
+			cleanedCount := 0
+			for oldBlockNum := range beacon.voteRewards {
+				if oldBlockNum < keepFromBlock && beacon.appliedVoteRewards[oldBlockNum] {
+					delete(beacon.voteRewards, oldBlockNum)
+					delete(beacon.appliedVoteRewards, oldBlockNum)
+					cleanedCount++
+				}
+			}
+			if cleanedCount > 0 {
+				log.Info("Cleaned up old vote rewards while producing new block",
+					"current_block", blockNumber,
+					"keep_from_block", keepFromBlock,
+					"cleaned_count", cleanedCount)
+			}
+		}
+
 		beacon.voteRewardsMu.Unlock()
 		for _, reward := range rewards {
 			state.AddBalance(reward.Voter, reward.Amount, tracing.BalanceIncreaseRewardMineBlock)
