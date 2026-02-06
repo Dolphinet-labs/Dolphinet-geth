@@ -17,19 +17,15 @@ var (
 )
 
 type ContractDeploymentFeeCalculator struct {
-	feePercentage          *big.Int
-	totalSupplyStorageAddr common.Address
-	totalSupplyStorageSlot common.Hash
+	feePercentage *big.Int
 }
 
-func NewContractDeploymentFeeCalculator(feePercentage *big.Int, totalSupplyStorageAddr common.Address, totalSupplyStorageSlot common.Hash) *ContractDeploymentFeeCalculator {
+func NewContractDeploymentFeeCalculator(feePercentage *big.Int) *ContractDeploymentFeeCalculator {
 	if feePercentage == nil {
 		feePercentage = big.NewInt(DefaultFeePercentage)
 	}
 	return &ContractDeploymentFeeCalculator{
-		feePercentage:          feePercentage,
-		totalSupplyStorageAddr: totalSupplyStorageAddr,
-		totalSupplyStorageSlot: totalSupplyStorageSlot,
+		feePercentage: feePercentage,
 	}
 }
 

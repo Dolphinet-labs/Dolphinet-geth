@@ -948,6 +948,11 @@ var (
 		Value:    false,
 		Category: flags.RollupCategory,
 	}
+	DOLGovernanceContractAddrFlag = &cli.StringFlag{
+		Name:     "dol.governanceadd",
+		Usage:    "The contract address of dolphinet governance",
+		Category: flags.RollupCategory,
+	}
 	RollupNodeRPCFlag = &cli.StringFlag{
 		Name:     "rollup.noderpc",
 		Usage:    "RPC endpoint for dn-node (for P2P transaction forwarding in PoS mode)",
@@ -1931,6 +1936,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	if ctx.Bool(PosEnabledFlag.Name) {
 		if ctx.IsSet(RollupNodeRPCFlag.Name) {
 			cfg.RollupNodeRPC = ctx.String(RollupNodeRPCFlag.Name)
+		}
+		if ctx.IsSet(DOLGovernanceContractAddrFlag.Name) {
+			cfg.DolGovernanceContractAddr = ctx.String(DOLGovernanceContractAddrFlag.Name)
 		}
 	}
 	if ctx.IsSet(RollupHistoricalRPCFlag.Name) {

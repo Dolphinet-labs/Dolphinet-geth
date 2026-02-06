@@ -106,7 +106,7 @@ func TestChargeContractDeploymentFeeIfNeeded_ValidatorExempt(t *testing.T) {
 	initialBalance := statedb.GetBalance(validatorAddr)
 	feeReceiverBalance := statedb.GetBalance(feeCalculator.GetFeeReceiver())
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, validatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, validatorAddr, statedb, nil)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -143,7 +143,7 @@ func TestChargeContractDeploymentFeeIfNeeded_NonValidatorCharged(t *testing.T) {
 
 	initialFeeReceiverBalance := statedb.GetBalance(feeReceiverAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -179,7 +179,7 @@ func TestChargeContractDeploymentFeeIfNeeded_InsufficientBalance(t *testing.T) {
 	insufficientBalance := new(big.Int).Div(expectedFee, big.NewInt(2)) // Half of the fee
 	statedb.AddBalance(nonValidatorAddr, uint256.MustFromBig(insufficientBalance), tracing.BalanceChangeUnspecified)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	if err == nil {
 		t.Error("Expected error for insufficient balance, got nil")
@@ -203,7 +203,7 @@ func TestChargeContractDeploymentFeeIfNeeded_NilValidatorChecker(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -226,7 +226,7 @@ func TestChargeContractDeploymentFeeIfNeeded_NilFeeCalculator(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -252,7 +252,7 @@ func TestChargeContractDeploymentFeeIfNeeded_ZeroTotalSupply(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -278,7 +278,7 @@ func TestChargeContractDeploymentFeeIfNeeded_NegativeTotalSupply(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -305,7 +305,7 @@ func TestChargeContractDeploymentFeeIfNeeded_ZeroFee(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -331,7 +331,7 @@ func TestChargeContractDeploymentFeeIfNeeded_FeeOverflow(t *testing.T) {
 
 	statedb.AddBalance(nonValidatorAddr, uint256.NewInt(1000000000000000000), tracing.BalanceChangeUnspecified)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	// Should handle overflow gracefully
 	if err != nil {
@@ -358,7 +358,7 @@ func TestChargeContractDeploymentFeeIfNeeded_ExactBalance(t *testing.T) {
 
 	initialFeeReceiverBalance := statedb.GetBalance(feeReceiverAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -395,14 +395,14 @@ func TestChargeContractDeploymentFeeIfNeeded_MultipleNonValidators(t *testing.T)
 
 	// Charge fee for first non-validator
 	statedb.AddBalance(nonValidator1, uint256.MustFromBig(sufficientBalance), tracing.BalanceChangeUnspecified)
-	err1 := chargeContractDeploymentFeeIfNeeded(evm, nonValidator1, statedb)
+	err1 := chargeContractDeploymentFeeIfNeeded(evm, nonValidator1, statedb, nil)
 	if err1 != nil {
 		t.Errorf("Unexpected error for nonValidator1: %v", err1)
 	}
 
 	// Charge fee for second non-validator
 	statedb.AddBalance(nonValidator2, uint256.MustFromBig(sufficientBalance), tracing.BalanceChangeUnspecified)
-	err2 := chargeContractDeploymentFeeIfNeeded(evm, nonValidator2, statedb)
+	err2 := chargeContractDeploymentFeeIfNeeded(evm, nonValidator2, statedb, nil)
 	if err2 != nil {
 		t.Errorf("Unexpected error for nonValidator2: %v", err2)
 	}

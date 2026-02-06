@@ -193,6 +193,8 @@ type Config struct {
 	RollupDisableTxPoolAdmission              bool
 	RollupHaltOnIncompatibleProtocolVersion   string
 
+	DolGovernanceContractAddr string
+
 	InteropMessageRPC       string `toml:",omitempty"`
 	InteropMempoolFiltering bool   `toml:",omitempty"`
 }

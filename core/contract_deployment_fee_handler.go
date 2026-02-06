@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -11,12 +12,15 @@ import (
 	"github.com/holiman/uint256"
 )
 
-func chargeContractDeploymentFeeIfNeeded(evm *vm.EVM, from common.Address, statedb *state.StateDB) error {
-	validatorChecker := evm.Config.ValidatorChecker
-	feeCalculator := evm.Config.ContractDeploymentFeeCalculator
+func chargeContractDeploymentFeeIfNeeded(evm *vm.EVM, from common.Address, statedb *state.StateDB, validatorChecker ValidatorChecker) error {
+	if validatorChecker == nil {
+		validatorChecker = NewContractValidatorChecker(common.Address{})
+	}
+	feeCalculator := NewContractDeploymentFeeCalculator(big.NewInt(100))
 
 	// If either is nil, skip fee charging (allows tests to disable by passing nil)
 	if validatorChecker == nil || feeCalculator == nil {
+		log.Debug("validatorChecker or feeCalculator is nil")
 		return nil
 	}
 

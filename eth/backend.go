@@ -288,6 +288,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 
+	if config.DolGovernanceContractAddr != "" {
+		validatorChecker := core.NewContractValidatorChecker(common.HexToAddress(config.DolGovernanceContractAddr))
+		eth.blockchain.SetValidatorChecker(validatorChecker)
+	}
+
 	if chainConfig := eth.blockchain.Config(); chainConfig.Optimism != nil { // config.Genesis.Config.ChainID cannot be used because it's based on CLI flags only, thus default to mainnet L1
 		config.NetworkId = chainConfig.ChainID.Uint64() // optimism defaults eth network ID to chain ID
 		eth.networkID = config.NetworkId
@@ -381,17 +386,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.Miner.GasPrice)
 
-	// TODO: config these
-	validatorContractAddr := common.Address{}
-	totalSupplyStorageAddr := common.Address{}
-	totalSupplyStorageSlot := common.Hash{}
-
-	eth.APIBackend.validatorChecker = core.NewContractValidatorChecker(validatorContractAddr)
+	eth.APIBackend.validatorChecker = core.NewContractValidatorChecker(common.HexToAddress(config.DolGovernanceContractAddr))
 
 	eth.APIBackend.contractDeploymentFeeCalculator = core.NewContractDeploymentFeeCalculator(
 		big.NewInt(100),
-		totalSupplyStorageAddr,
-		totalSupplyStorageSlot,
 	)
 
 	if config.RollupSequencerHTTP != "" {
