@@ -299,6 +299,12 @@ var (
 		Usage:    "Manually specify the Optimsim Interop feature-set fork timestamp, overriding the bundled setting",
 		Category: flags.EthCategory,
 	}
+	DolphinetPoSBlockFlag = &cli.Uint64Flag{
+		Name:     "dolphinet.posblock",
+		Usage:    "Block number at which Dolphinet PoS rules activate (0 = PoS from genesis). Overrides chain config from genesis when set",
+		Category: flags.EthCategory,
+		EnvVars:  []string{"DOLPHINET_POS_BLOCK"},
+	}
 	SyncModeFlag = &cli.StringFlag{
 		Name:     "syncmode",
 		Usage:    `Blockchain sync mode ("snap" or "full")`,
@@ -1941,6 +1947,18 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.DolGovernanceContractAddr = ctx.String(DOLGovernanceContractAddrFlag.Name)
 		}
 	}
+	if ctx.IsSet(DolphinetPoSBlockFlag.Name) {
+		v := ctx.Uint64(DolphinetPoSBlockFlag.Name)
+		if v == 0 {
+			cfg.DolphinetPoSBlock = nil
+			log.Info("DolphinetPoSBlock CLI flag set to 0, disable override")
+		} else {
+			tmp := v
+			cfg.DolphinetPoSBlock = &tmp
+			log.Info("DolphinetPoSBlock CLI flag applied to ethconfig.Config",
+				"posBlock", v)
+		}
+	}
 	if ctx.IsSet(RollupHistoricalRPCFlag.Name) {
 		cfg.RollupHistoricalRPC = ctx.String(RollupHistoricalRPCFlag.Name)
 	}
@@ -2426,6 +2444,15 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	config, _, err := core.LoadChainConfig(chainDb, gspec)
 	if err != nil {
 		Fatalf("%v", err)
+	}
+	// 在内存中覆盖 ChainConfig 的 DolphinetPoSBlock，使其与命令行参数保持一致。
+	if ctx.IsSet(DolphinetPoSBlockFlag.Name) {
+		v := ctx.Uint64(DolphinetPoSBlockFlag.Name)
+		if v == 0 {
+			config.DolphinetPoSBlock = nil
+		} else {
+			config.DolphinetPoSBlock = new(big.Int).SetUint64(v)
+		}
 	}
 	engine, err := ethconfig.CreateConsensusEngine(config, chainDb)
 	if err != nil {

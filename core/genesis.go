@@ -290,8 +290,9 @@ func (e *GenesisMismatchError) Error() string {
 
 // ChainOverrides contains the changes to chain config.
 type ChainOverrides struct {
-	OverridePrague *uint64
-	OverrideVerkle *uint64
+	OverridePrague          *uint64
+	OverrideVerkle          *uint64
+	OverrideDolphinetPoSBlock *uint64
 
 	// OP-Stack additions
 	OverrideOptimismCanyon   *uint64
@@ -342,6 +343,13 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 	}
 	if o.OverrideVerkle != nil {
 		cfg.VerkleTime = o.OverrideVerkle
+	}
+	if o.OverrideDolphinetPoSBlock != nil {
+		if *o.OverrideDolphinetPoSBlock == 0 {
+			cfg.DolphinetPoSBlock = nil
+		} else {
+			cfg.DolphinetPoSBlock = new(big.Int).SetUint64(*o.OverrideDolphinetPoSBlock)
+		}
 	}
 
 	// OP-Stack overrides

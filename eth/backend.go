@@ -48,7 +48,6 @@ import (
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
 	"github.com/ethereum/go-ethereum/eth/protocols/snap"
 	"github.com/ethereum/go-ethereum/eth/tracers"
-	"github.com/ethereum/go-ethereum/eth/tracers/live"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/ethapi"
@@ -224,17 +223,6 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 			ChainHistoryMode:    config.HistoryMode,
 		}
 	)
-	// If supply tracer is enabled, register total supply getter BEFORE creating the tracer
-	// This ensures the registration function is available when the tracer is created
-	if config.VMTrace == "supply" {
-		// Register the function to connect supply tracer with core package
-		// This avoids import cycle since eth package can import both core and live
-		log.Info("Registering supply tracer total supply getter function")
-		live.SetRegisterFunc(func(getter live.TotalSupplyGetterFunc) {
-			core.SetTotalSupplyGetter(getter)
-		})
-	}
-
 	if config.VMTrace != "" {
 		traceConfig := json.RawMessage("{}")
 		if config.VMTraceJsonConfig != "" {
@@ -281,6 +269,18 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if config.OverrideOptimismInterop != nil {
 		overrides.OverrideOptimismInterop = config.OverrideOptimismInterop
 	}
+
+	if config.DolphinetPoSBlock != nil {
+		if *config.DolphinetPoSBlock == 0 {
+			zero := uint64(0)
+			overrides.OverrideDolphinetPoSBlock = &zero
+			log.Info("DolphinetPoSBlock override set to 0 via overrides")
+		} else {
+			v := *config.DolphinetPoSBlock
+			overrides.OverrideDolphinetPoSBlock = &v
+			log.Info("DolphinetPoSBlock override set via overrides", "posBlock", *config.DolphinetPoSBlock)
+		}
+	}
 	overrides.ApplySuperchainUpgrades = config.ApplySuperchainUpgrades
 
 	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, config.Genesis, &overrides, eth.engine, vmConfig, &config.TransactionHistory)
@@ -288,10 +288,11 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 
-	if config.DolGovernanceContractAddr != "" {
-		validatorChecker := core.NewContractValidatorChecker(common.HexToAddress(config.DolGovernanceContractAddr))
-		eth.blockchain.SetValidatorChecker(validatorChecker)
+	if config.DolGovernanceContractAddr == "" {
+		log.Warn("DolGovernanceContractAddr is empty; validator exemption may break consensus")
 	}
+	validatorChecker := core.NewContractValidatorChecker(common.HexToAddress(config.DolGovernanceContractAddr))
+	eth.blockchain.SetValidatorChecker(validatorChecker)
 
 	if chainConfig := eth.blockchain.Config(); chainConfig.Optimism != nil { // config.Genesis.Config.ChainID cannot be used because it's based on CLI flags only, thus default to mainnet L1
 		config.NetworkId = chainConfig.ChainID.Uint64() // optimism defaults eth network ID to chain ID
@@ -386,7 +387,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.Miner.GasPrice)
 
-	eth.APIBackend.validatorChecker = core.NewContractValidatorChecker(common.HexToAddress(config.DolGovernanceContractAddr))
+	eth.APIBackend.validatorChecker = validatorChecker
 
 	eth.APIBackend.contractDeploymentFeeCalculator = core.NewContractDeploymentFeeCalculator(
 		big.NewInt(100),

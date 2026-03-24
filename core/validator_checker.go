@@ -19,9 +19,11 @@ type ContractValidatorChecker struct {
 }
 
 func NewContractValidatorChecker(contractAddr common.Address) *ContractValidatorChecker {
-	return &ContractValidatorChecker{
+	checker := &ContractValidatorChecker{
 		validatorContractAddr: contractAddr,
 	}
+	log.Info("NewContractValidatorChecker created", "contract", contractAddr.Hex())
+	return checker
 }
 
 func getValidatorsMethodID() []byte {
@@ -64,13 +66,23 @@ func decodeAddressArray(data []byte) ([]common.Address, error) {
 }
 
 func (c *ContractValidatorChecker) IsValidator(addr common.Address, evm *vm.EVM) bool {
+	log.Debug("IsValidator called",
+		"addr", addr.Hex(),
+		"contract", c.validatorContractAddr.Hex(),
+	)
 	if c.validatorContractAddr == (common.Address{}) {
-		log.Debug("Validator contract address not configured, treating as non-validator", "addr", addr.Hex())
+		log.Debug("Validator contract address not configured, treating as non-validator",
+			"addr", addr.Hex(),
+			"contract", c.validatorContractAddr.Hex(),
+		)
 		return false
 	}
 
 	if !evm.StateDB.Exist(c.validatorContractAddr) {
-		log.Debug("Validator contract does not exist", "contract", c.validatorContractAddr.Hex(), "addr", addr.Hex())
+		log.Debug("Validator contract does not exist",
+			"contract", c.validatorContractAddr.Hex(),
+			"addr", addr.Hex(),
+		)
 		return false
 	}
 
@@ -84,28 +96,46 @@ func (c *ContractValidatorChecker) IsValidator(addr common.Address, evm *vm.EVM)
 	)
 
 	if err != nil {
-		log.Debug("Failed to call getValidators", "contract", c.validatorContractAddr.Hex(), "err", err, "addr", addr.Hex())
+		log.Debug("Failed to call getValidators",
+			"contract", c.validatorContractAddr.Hex(),
+			"err", err,
+			"addr", addr.Hex(),
+		)
 		return false
 	}
 
 	if len(ret) == 0 {
-		log.Debug("getValidators returned empty result", "contract", c.validatorContractAddr.Hex(), "addr", addr.Hex())
+		log.Debug("getValidators returned empty result",
+			"contract", c.validatorContractAddr.Hex(),
+			"addr", addr.Hex(),
+		)
 		return false
 	}
 
 	validators, err := decodeAddressArray(ret)
 	if err != nil {
-		log.Warn("Failed to decode validator list", "contract", c.validatorContractAddr.Hex(), "err", err, "addr", addr.Hex())
+		log.Warn("Failed to decode validator list",
+			"contract", c.validatorContractAddr.Hex(),
+			"err", err,
+			"addr", addr.Hex(),
+		)
 		return false
 	}
 
 	for _, validator := range validators {
 		if validator == addr {
-			log.Debug("Address is a validator", "addr", addr.Hex(), "contract", c.validatorContractAddr.Hex())
+			log.Debug("Address is a validator",
+				"addr", addr.Hex(),
+				"contract", c.validatorContractAddr.Hex(),
+			)
 			return true
 		}
 	}
 
-	log.Debug("Address is not a validator", "addr", addr.Hex(), "contract", c.validatorContractAddr.Hex(), "validatorCount", len(validators))
+	log.Debug("Address is not a validator",
+		"addr", addr.Hex(),
+		"contract", c.validatorContractAddr.Hex(),
+		"validatorCount", len(validators),
+	)
 	return false
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -153,6 +154,13 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // and uses the input parameters for its environment similar to ApplyTransaction. However,
 // this method takes an already created EVM instance as input.
 func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, validatorChecker ValidatorChecker) (receipt *types.Receipt, err error) {
+	if evm != nil && tx != nil {
+		log.Debug("ApplyTransactionWithEVM validatorChecker status",
+			"tx", tx.Hash().Hex(),
+			"blockNumber", blockNumber.Uint64(),
+			"validatorCheckerNil", validatorChecker == nil,
+		)
+	}
 	if hooks := evm.Config.Tracer; hooks != nil {
 		if hooks.OnTxStart != nil {
 			hooks.OnTxStart(evm.GetVMContext(), tx, msg.From)
@@ -168,7 +176,7 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 	}
 
 	if msg.To == nil {
-		if err := chargeContractDeploymentFeeIfNeeded(evm, msg.From, statedb, validatorChecker); err != nil {
+		if err := chargeContractDeploymentFeeIfNeeded(evm, msg.From, statedb, validatorChecker, blockNumber.Uint64()); err != nil {
 			return nil, fmt.Errorf("contract deployment fee charge failed: %w", err)
 		}
 	}
@@ -248,8 +256,13 @@ func ApplyTransaction(evm *vm.EVM, gp *GasPool, statedb *state.StateDB, header *
 	if err != nil {
 		return nil, err
 	}
-	// Create a new context to be used in the EVM environment
-	return ApplyTransactionWithEVM(msg, gp, statedb, header.Number, header.Hash(), tx, usedGas, evm, nil)
+	var checker ValidatorChecker
+	if evm != nil && evm.Config.ValidatorChecker != nil {
+		if c, ok := evm.Config.ValidatorChecker.(ValidatorChecker); ok {
+			checker = c
+		}
+	}
+	return ApplyTransactionWithEVM(msg, gp, statedb, header.Number, header.Hash(), tx, usedGas, evm, checker)
 }
 
 // ProcessBeaconBlockRoot applies the EIP-4788 system call to the beacon block root

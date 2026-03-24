@@ -12,19 +12,36 @@ import (
 	"github.com/holiman/uint256"
 )
 
-func chargeContractDeploymentFeeIfNeeded(evm *vm.EVM, from common.Address, statedb *state.StateDB, validatorChecker ValidatorChecker) error {
-	if validatorChecker == nil {
-		validatorChecker = NewContractValidatorChecker(common.Address{})
+func chargeContractDeploymentFeeIfNeeded(evm *vm.EVM, from common.Address, statedb *state.StateDB, validatorChecker ValidatorChecker, blockNumber uint64) error {
+	var posActive bool
+	var posBlock uint64
+	if evm.ChainConfig() != nil && evm.ChainConfig().DolphinetPoSBlock != nil {
+		posBlock = evm.ChainConfig().DolphinetPoSBlock.Uint64()
+		if blockNumber >= posBlock {
+			posActive = true
+		}
+	}
+	log.Debug("chargeContractDeploymentFeeIfNeeded entry",
+		"from", from.Hex(),
+		"blockNumber", blockNumber,
+		"posBlock", posBlock,
+		"posActive", posActive,
+		"validatorCheckerNil", validatorChecker == nil,
+	)
+	if !posActive {
+		return nil
 	}
 	feeCalculator := NewContractDeploymentFeeCalculator(big.NewInt(100))
 
-	// If either is nil, skip fee charging (allows tests to disable by passing nil)
-	if validatorChecker == nil || feeCalculator == nil {
-		log.Debug("validatorChecker or feeCalculator is nil")
+	if feeCalculator == nil {
+		log.Debug("feeCalculator is nil")
 		return nil
 	}
 
-	isValidator := validatorChecker.IsValidator(from, evm)
+	isValidator := false
+	if validatorChecker != nil {
+		isValidator = validatorChecker.IsValidator(from, evm)
+	}
 	if isValidator {
 		log.Debug("Validator contract deployment, skipping extra fee", "from", from.Hex())
 		return nil

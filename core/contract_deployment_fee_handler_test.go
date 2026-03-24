@@ -106,7 +106,7 @@ func TestChargeContractDeploymentFeeIfNeeded_ValidatorExempt(t *testing.T) {
 	initialBalance := statedb.GetBalance(validatorAddr)
 	feeReceiverBalance := statedb.GetBalance(feeCalculator.GetFeeReceiver())
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, validatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, validatorAddr, statedb, nil, 1)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -143,7 +143,7 @@ func TestChargeContractDeploymentFeeIfNeeded_NonValidatorCharged(t *testing.T) {
 
 	initialFeeReceiverBalance := statedb.GetBalance(feeReceiverAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -179,7 +179,7 @@ func TestChargeContractDeploymentFeeIfNeeded_InsufficientBalance(t *testing.T) {
 	insufficientBalance := new(big.Int).Div(expectedFee, big.NewInt(2)) // Half of the fee
 	statedb.AddBalance(nonValidatorAddr, uint256.MustFromBig(insufficientBalance), tracing.BalanceChangeUnspecified)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	if err == nil {
 		t.Error("Expected error for insufficient balance, got nil")
@@ -203,16 +203,17 @@ func TestChargeContractDeploymentFeeIfNeeded_NilValidatorChecker(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
 	}
 
-	// Balance should not change when validator checker is nil
+	// 在 PoS 激活后，即使 validatorChecker 为 nil，也应当收取部署费，
+	// 以保证出块和验证节点在部署费逻辑上一致。
 	finalBalance := statedb.GetBalance(nonValidatorAddr)
-	if finalBalance.Cmp(initialBalance) != 0 {
-		t.Errorf("Balance should not change when validator checker is nil, initial: %v, final: %v", initialBalance, finalBalance)
+	if finalBalance.Cmp(initialBalance) == 0 {
+		t.Errorf("Expected balance to decrease when validator checker is nil in PoS mode, initial: %v, final: %v", initialBalance, finalBalance)
 	}
 }
 
@@ -226,7 +227,7 @@ func TestChargeContractDeploymentFeeIfNeeded_NilFeeCalculator(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -252,7 +253,7 @@ func TestChargeContractDeploymentFeeIfNeeded_ZeroTotalSupply(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -278,7 +279,7 @@ func TestChargeContractDeploymentFeeIfNeeded_NegativeTotalSupply(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -305,7 +306,7 @@ func TestChargeContractDeploymentFeeIfNeeded_ZeroFee(t *testing.T) {
 
 	initialBalance := statedb.GetBalance(nonValidatorAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -331,7 +332,7 @@ func TestChargeContractDeploymentFeeIfNeeded_FeeOverflow(t *testing.T) {
 
 	statedb.AddBalance(nonValidatorAddr, uint256.NewInt(1000000000000000000), tracing.BalanceChangeUnspecified)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	// Should handle overflow gracefully
 	if err != nil {
@@ -358,7 +359,7 @@ func TestChargeContractDeploymentFeeIfNeeded_ExactBalance(t *testing.T) {
 
 	initialFeeReceiverBalance := statedb.GetBalance(feeReceiverAddr)
 
-	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil)
+	err := chargeContractDeploymentFeeIfNeeded(evm, nonValidatorAddr, statedb, nil, 1)
 
 	if err != nil {
 		t.Errorf("Unexpected error: %v", err)
@@ -395,14 +396,14 @@ func TestChargeContractDeploymentFeeIfNeeded_MultipleNonValidators(t *testing.T)
 
 	// Charge fee for first non-validator
 	statedb.AddBalance(nonValidator1, uint256.MustFromBig(sufficientBalance), tracing.BalanceChangeUnspecified)
-	err1 := chargeContractDeploymentFeeIfNeeded(evm, nonValidator1, statedb, nil)
+	err1 := chargeContractDeploymentFeeIfNeeded(evm, nonValidator1, statedb, nil, 1)
 	if err1 != nil {
 		t.Errorf("Unexpected error for nonValidator1: %v", err1)
 	}
 
 	// Charge fee for second non-validator
 	statedb.AddBalance(nonValidator2, uint256.MustFromBig(sufficientBalance), tracing.BalanceChangeUnspecified)
-	err2 := chargeContractDeploymentFeeIfNeeded(evm, nonValidator2, statedb, nil)
+	err2 := chargeContractDeploymentFeeIfNeeded(evm, nonValidator2, statedb, nil, 1)
 	if err2 != nil {
 		t.Errorf("Unexpected error for nonValidator2: %v", err2)
 	}

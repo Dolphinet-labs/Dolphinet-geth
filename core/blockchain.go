@@ -444,16 +444,14 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		bc.logger.OnBlockchainInit(chainConfig)
 	}
 	if bc.logger != nil && bc.logger.OnGenesisBlock != nil {
-		if block := bc.CurrentBlock(); block.Number.Uint64() == 0 {
-			alloc, err := getGenesisState(bc.db, block.Hash())
-			if err != nil {
-				return nil, fmt.Errorf("failed to get genesis state: %w", err)
-			}
-			if alloc == nil {
-				return nil, errors.New("live blockchain tracer requires genesis alloc to be set")
-			}
-			bc.logger.OnGenesisBlock(bc.genesisBlock, alloc)
+		alloc, err := getGenesisState(bc.db, bc.genesisBlock.Hash())
+		if err != nil {
+			return nil, fmt.Errorf("failed to get genesis state: %w", err)
 		}
+		if alloc == nil {
+			return nil, errors.New("live blockchain tracer requires genesis alloc to be set")
+		}
+		bc.logger.OnGenesisBlock(bc.genesisBlock, alloc)
 	}
 
 	// Load any existing snapshot, regenerating it if loading failed
@@ -727,6 +725,7 @@ func (bc *BlockChain) SetValidatorChecker(validatorChecker ValidatorChecker) {
 	if sp, ok := bc.processor.(*StateProcessor); ok {
 		sp.validatorChecker = validatorChecker
 	}
+	bc.vmConfig.ValidatorChecker = validatorChecker
 }
 
 func (bc *BlockChain) SetSafe(header *types.Header) {
@@ -1984,6 +1983,7 @@ func (bc *BlockChain) processBlock(block *types.Block, statedb *state.StateDB, s
 		bc.reportBlock(block, res, err)
 		return nil, err
 	}
+
 	vtime := time.Since(vstart)
 
 	// If witnesses was generated and stateless self-validation requested, do

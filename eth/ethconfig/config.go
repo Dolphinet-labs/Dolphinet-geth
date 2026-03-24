@@ -194,6 +194,7 @@ type Config struct {
 	RollupHaltOnIncompatibleProtocolVersion   string
 
 	DolGovernanceContractAddr string
+	DolphinetPoSBlock         *uint64
 
 	InteropMessageRPC       string `toml:",omitempty"`
 	InteropMempoolFiltering bool   `toml:",omitempty"`

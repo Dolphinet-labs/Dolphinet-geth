@@ -236,6 +236,9 @@ func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *ty
 		return consensus.ErrInvalidTerminalBlock
 	}
 	cfg := chain.Config()
+	if cfg.DolphinetPoSBlock != nil && header.Number.Cmp(cfg.DolphinetPoSBlock) < 0 {
+		return beacon.ethone.VerifyHeader(chain, header)
+	}
 	// Check >0 TDs with pre-merge, --0 TDs with post-merge rules
 	if header.Difficulty.Sign() > 0 ||
 		// OP-Stack: transitioned networks must use legacy consensus pre-Bedrock
@@ -257,11 +260,28 @@ func (beacon *Beacon) splitBedrockHeaders(chain consensus.ChainHeaderReader, hea
 	return headers, nil
 }
 
+func (beacon *Beacon) splitDolphinetPoSHeaders(chain consensus.ChainHeaderReader, headers []*types.Header) ([]*types.Header, []*types.Header) {
+	cfg := chain.Config()
+	if cfg.DolphinetPoSBlock == nil {
+		return nil, headers
+	}
+	for i, h := range headers {
+		if h.Number.Cmp(cfg.DolphinetPoSBlock) >= 0 {
+			return headers[:i], headers[i:]
+		}
+	}
+	return headers, nil
+}
+
 // splitHeaders splits the provided header batch into two parts according to
 // the difficulty field.
 //
 // Note, this function will not verify the header validity but just split them.
 func (beacon *Beacon) splitHeaders(chain consensus.ChainHeaderReader, headers []*types.Header) ([]*types.Header, []*types.Header) {
+	cfg := chain.Config()
+	if cfg.IsOptimism() && cfg.DolphinetPoSBlock != nil {
+		return beacon.splitDolphinetPoSHeaders(chain, headers)
+	}
 	if chain.Config().IsOptimism() {
 		return beacon.splitBedrockHeaders(chain, headers)
 	}
@@ -496,6 +516,15 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 		beacon.ethone.Finalize(chain, header, state, body)
 		return
 	}
+	cfg := chain.Config()
+	if cfg.DolphinetPoSBlock != nil && header.Number.Cmp(cfg.DolphinetPoSBlock) < 0 {
+		for _, w := range body.Withdrawals {
+			amount := new(uint256.Int).SetUint64(w.Amount)
+			amount = amount.Mul(amount, uint256.NewInt(params.DOLGWei))
+			state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
+		}
+		return
+	}
 	blockNumber := header.Number.Uint64()
 	callerInfo := getCallerInfo()
 
@@ -612,7 +641,7 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 	blockNumber := header.Number.Uint64()
 	var validatorAddr common.Address
 	encodeValidatorAddressToExtra(header, validatorAddr)
-	if beacon.nodeRPCService != nil {
+	if chain.Config().IsDolphinetPoS(header.Number) && beacon.nodeRPCService != nil {
 		ctx := context.Background()
 		blockNumberHex := hexutil.Uint64(blockNumber)
 		err := beacon.nodeRPCService.CallContext(ctx, &validatorAddr, "opnode_getValidatorForBlock", blockNumberHex)
@@ -627,7 +656,11 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 		}
 	} else {
 		encodeValidatorAddressToExtra(header, common.Address{})
-		log.Debug("nodeRPCService is nil, setting Extra to 32 bytes without validator address", "block_number", blockNumber)
+		if !chain.Config().IsDolphinetPoS(header.Number) {
+			log.Debug("Block before Dolphinet PoS activation, no validator in Extra", "block_number", blockNumber)
+		} else {
+			log.Debug("nodeRPCService is nil, setting Extra to 32 bytes without validator address", "block_number", blockNumber)
+		}
 	}
 
 	beacon.voteRewardsMu.Lock()
