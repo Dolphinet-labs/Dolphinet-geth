@@ -305,6 +305,12 @@ var (
 		Category: flags.EthCategory,
 		EnvVars:  []string{"DOLPHINET_POS_BLOCK"},
 	}
+	UnsafeForceSyncOnMissingParentFlag = &cli.BoolFlag{
+		Name:     "rollup.unsafe-force-sync-on-missing-parent",
+		Usage:    "UNSAFE: force beacon sync when payload parent is missing, may cause deep reorg/re-sync",
+		Category: flags.EthCategory,
+		EnvVars:  []string{"ROLLUP_UNSAFE_FORCE_SYNC_ON_MISSING_PARENT"},
+	}
 	SyncModeFlag = &cli.StringFlag{
 		Name:     "syncmode",
 		Usage:    `Blockchain sync mode ("snap" or "full")`,
@@ -1957,6 +1963,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 			cfg.DolphinetPoSBlock = &tmp
 			log.Info("DolphinetPoSBlock CLI flag applied to ethconfig.Config",
 				"posBlock", v)
+		}
+	}
+	if ctx.IsSet(UnsafeForceSyncOnMissingParentFlag.Name) {
+		cfg.UnsafeForceSyncOnMissingParent = ctx.Bool(UnsafeForceSyncOnMissingParentFlag.Name)
+		if cfg.UnsafeForceSyncOnMissingParent {
+			log.Warn("Unsafe force-sync on missing parent is ENABLED")
 		}
 	}
 	if ctx.IsSet(RollupHistoricalRPCFlag.Name) {

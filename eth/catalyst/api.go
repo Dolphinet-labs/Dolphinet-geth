@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -1064,6 +1065,15 @@ func (api *ConsensusAPI) delayPayloadImport(block *types.Block) engine.PayloadSt
 	if err == nil {
 		log.Debug("Payload accepted for sync extension", "number", block.NumberU64(), "hash", block.Hash())
 		return engine.PayloadStatusV1{Status: engine.SYNCING}
+	}
+	if api.eth.UnsafeForceSyncOnMissingParent() && strings.Contains(err.Error(), "forced head needed for startup") {
+		log.Warn("Unsafe forced beacon sync on missing parent is active", "number", block.NumberU64(), "hash", block.Hash(), "parent", block.ParentHash())
+		if forceErr := api.eth.Downloader().BeaconSync(api.eth.SyncMode(), block.Header(), nil); forceErr == nil {
+			log.Warn("Forced beacon sync accepted payload head", "number", block.NumberU64(), "hash", block.Hash())
+			return engine.PayloadStatusV1{Status: engine.SYNCING}
+		} else {
+			log.Warn("Forced beacon sync failed", "number", block.NumberU64(), "hash", block.Hash(), "err", forceErr)
+		}
 	}
 	// Either no beacon sync was started yet, or it rejected the delivered
 	// payload as non-integratable on top of the existing sync. We'll just

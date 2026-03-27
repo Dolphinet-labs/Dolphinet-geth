@@ -714,6 +714,12 @@ func (s *Ethereum) SyncMode() ethconfig.SyncMode {
 	return ethconfig.FullSync
 }
 
+// UnsafeForceSyncOnMissingParent returns whether the unsafe forced beacon sync
+// workaround is enabled for missing-parent payload handling.
+func (s *Ethereum) UnsafeForceSyncOnMissingParent() bool {
+	return s.config != nil && s.config.UnsafeForceSyncOnMissingParent
+}
+
 // HandleRequiredProtocolVersion handles the protocol version signal. This implements opt-in halting,
 // the protocol version data is already logged and metered when signaled through the Engine API.
 func (s *Ethereum) HandleRequiredProtocolVersion(required params.ProtocolVersion) error {

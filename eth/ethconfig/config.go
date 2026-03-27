@@ -195,6 +195,7 @@ type Config struct {
 
 	DolGovernanceContractAddr string
 	DolphinetPoSBlock         *uint64
+	UnsafeForceSyncOnMissingParent bool
 
 	InteropMessageRPC       string `toml:",omitempty"`
 	InteropMempoolFiltering bool   `toml:",omitempty"`
