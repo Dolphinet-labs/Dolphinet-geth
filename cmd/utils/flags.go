@@ -311,6 +311,12 @@ var (
 		Category: flags.EthCategory,
 		EnvVars:  []string{"ROLLUP_UNSAFE_FORCE_SYNC_ON_MISSING_PARENT"},
 	}
+	UnsafeForceSyncTargetBlockFlag = &cli.Uint64Flag{
+		Name:     "rollup.unsafe-force-sync-target-block",
+		Usage:    "UNSAFE: only for this block number, force beacon sync even on chain reorged missing-parent errors",
+		Category: flags.EthCategory,
+		EnvVars:  []string{"ROLLUP_UNSAFE_FORCE_SYNC_TARGET_BLOCK"},
+	}
 	SyncModeFlag = &cli.StringFlag{
 		Name:     "syncmode",
 		Usage:    `Blockchain sync mode ("snap" or "full")`,
@@ -1969,6 +1975,12 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.UnsafeForceSyncOnMissingParent = ctx.Bool(UnsafeForceSyncOnMissingParentFlag.Name)
 		if cfg.UnsafeForceSyncOnMissingParent {
 			log.Warn("Unsafe force-sync on missing parent is ENABLED")
+		}
+	}
+	if ctx.IsSet(UnsafeForceSyncTargetBlockFlag.Name) {
+		cfg.UnsafeForceSyncTargetBlock = ctx.Uint64(UnsafeForceSyncTargetBlockFlag.Name)
+		if cfg.UnsafeForceSyncTargetBlock > 0 {
+			log.Warn("Unsafe force-sync target block is set", "block", cfg.UnsafeForceSyncTargetBlock)
 		}
 	}
 	if ctx.IsSet(RollupHistoricalRPCFlag.Name) {

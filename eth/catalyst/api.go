@@ -1066,8 +1066,18 @@ func (api *ConsensusAPI) delayPayloadImport(block *types.Block) engine.PayloadSt
 		log.Debug("Payload accepted for sync extension", "number", block.NumberU64(), "hash", block.Hash())
 		return engine.PayloadStatusV1{Status: engine.SYNCING}
 	}
-	if api.eth.UnsafeForceSyncOnMissingParent() && strings.Contains(err.Error(), "forced head needed for startup") {
-		log.Warn("Unsafe forced beacon sync on missing parent is active", "number", block.NumberU64(), "hash", block.Hash(), "parent", block.ParentHash())
+	targetBlock := api.eth.UnsafeForceSyncTargetBlock()
+	isTargetBlock := targetBlock > 0 && block.NumberU64() == targetBlock
+	shouldForceForStartup := strings.Contains(err.Error(), "forced head needed for startup")
+	shouldForceForTargetReorg := isTargetBlock && strings.Contains(err.Error(), "chain reorged")
+	if api.eth.UnsafeForceSyncOnMissingParent() && (shouldForceForStartup || shouldForceForTargetReorg) {
+		log.Warn("Unsafe forced beacon sync on missing parent is active",
+			"number", block.NumberU64(),
+			"hash", block.Hash(),
+			"parent", block.ParentHash(),
+			"targetBlock", targetBlock,
+			"reason", err,
+		)
 		if forceErr := api.eth.Downloader().BeaconSync(api.eth.SyncMode(), block.Header(), nil); forceErr == nil {
 			log.Warn("Forced beacon sync accepted payload head", "number", block.NumberU64(), "hash", block.Hash())
 			return engine.PayloadStatusV1{Status: engine.SYNCING}

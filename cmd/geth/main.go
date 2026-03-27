@@ -75,6 +75,7 @@ var (
 		utils.OverrideOptimismInterop,
 		utils.DolphinetPoSBlockFlag,
 		utils.UnsafeForceSyncOnMissingParentFlag,
+		utils.UnsafeForceSyncTargetBlockFlag,
 		utils.EnablePersonal, // deprecated
 		utils.TxPoolLocalsFlag,
 		utils.TxPoolNoLocalsFlag,
