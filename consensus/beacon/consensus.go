@@ -17,11 +17,18 @@
 package beacon
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/big"
+	"runtime"
+	"strings"
+	"sync"
+
+	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -38,7 +45,49 @@ import (
 var (
 	beaconDifficulty = common.Big0          // The default block difficulty in the beacon consensus
 	beaconNonce      = types.EncodeNonce(0) // The default block nonce in the beacon consensus
+
+	// Dolphinet block reward for PoS validator (native DOL, in wei).
+	//   - 3,000,000 DOL per year to validators
+	//   - 2s per block => 15,768,000 blocks per year
+	//   - rewardPerBlock = 3_000_000 / 15_768_000 ~= 0.1902587519025875 DOL
+	//   - 0.1902587519025875 * 1e18 = 190258751902587500 wei
+	dolphinetBlockReward = func() *uint256.Int {
+		v, ok := new(big.Int).SetString("190258751902587500", 10)
+		if !ok {
+			return nil
+		}
+		return uint256.MustFromBig(v)
+	}()
+
+	// validatorAddressExtraOffset is the offset in header.Extra where the validator address is stored.
+	// The validator address (20 bytes) is stored at the end of Extra (last 20 bytes).
+	// MaximumExtraDataSize is 32 bytes, so we use the last 20 bytes for validator address.
+	validatorAddressExtraOffset = 12 // 32 - 20 = 12
 )
+
+func encodeValidatorAddressToExtra(header *types.Header, validatorAddr common.Address) {
+	originalLen := len(header.Extra)
+	if len(header.Extra) != int(params.MaximumExtraDataSize) {
+		extra := make([]byte, params.MaximumExtraDataSize)
+		if len(header.Extra) > 0 {
+			copy(extra, header.Extra)
+		}
+		header.Extra = extra
+		log.Debug("encodeValidatorAddressToExtra: extended Extra", "original_len", originalLen, "new_len", len(header.Extra))
+	}
+	copy(header.Extra[validatorAddressExtraOffset:], validatorAddr[:])
+	log.Debug("Encoded validator address to Extra", "extra_len", len(header.Extra), "offset", validatorAddressExtraOffset, "validator", validatorAddr, "original_len", originalLen)
+}
+
+func decodeValidatorAddressFromExtra(header *types.Header) common.Address {
+	if len(header.Extra) < int(params.MaximumExtraDataSize) {
+		log.Debug("Extra too short to contain validator address", "extra_len", len(header.Extra), "required", params.MaximumExtraDataSize)
+		return common.Address{}
+	}
+	var validatorAddr common.Address
+	copy(validatorAddr[:], header.Extra[validatorAddressExtraOffset:])
+	return validatorAddr
+}
 
 // Various error messages to mark blocks invalid. These should be private to
 // prevent engine specific errors from being referenced in the remainder of the
@@ -61,15 +110,81 @@ var (
 // engine implements the consensus interface (except the beacon itself).
 type Beacon struct {
 	// For migrated OP chains (OP mainnet, OP Goerli), ethone is a dummy legacy pre-Bedrock consensus
-	ethone consensus.Engine // Original consensus engine used in eth1, e.g. ethash or clique
+	ethone         consensus.Engine // Original consensus engine used in eth1, e.g. ethash or clique
+	nodeRPCService *rpc.Client
+	peerRPCService *rpc.Client // RPC client to connect to peer nodes (for replica nodes to get vote rewards)
+
+	// Vote rewards for the next block
+	voteRewardsMu      sync.RWMutex
+	voteRewards        map[uint64][]VoteReward
+	appliedVoteRewards map[uint64]bool
 }
 
-// New creates a consensus engine with the given embedded eth1 engine.
+type VoteReward struct {
+	Voter  common.Address `json:"voter"`
+	Amount *uint256.Int   `json:"amount"`
+}
+
 func New(ethone consensus.Engine) *Beacon {
 	if _, ok := ethone.(*Beacon); ok {
 		panic("nested consensus engine")
 	}
-	return &Beacon{ethone: ethone}
+	return &Beacon{
+		ethone:             ethone,
+		voteRewards:        make(map[uint64][]VoteReward),
+		appliedVoteRewards: make(map[uint64]bool),
+	}
+}
+
+func (beacon *Beacon) SetNodeRPCService(client *rpc.Client) {
+	beacon.nodeRPCService = client
+}
+
+// SetPeerRPCService sets the RPC client for connecting to peer nodes (e.g., for replica nodes to get vote rewards from validator nodes)
+func (beacon *Beacon) SetPeerRPCService(client *rpc.Client) {
+	beacon.peerRPCService = client
+}
+
+// SetVoteRewards sets vote rewards for a specific block number.
+// This is called via RPC from the validator node when it receives vote reward instructions from the manager.
+// Accepts rewards as []map[string]interface{} with "voter" (string) and "amount" (string, hex) fields.
+func (beacon *Beacon) SetVoteRewards(blockNumber uint64, rewardsData interface{}) {
+	// Convert rewardsData to []VoteReward
+	var rewards []VoteReward
+	if rewardsMap, ok := rewardsData.([]map[string]interface{}); ok {
+		rewards = make([]VoteReward, 0, len(rewardsMap))
+		for _, r := range rewardsMap {
+			voterStr, _ := r["voter"].(string)
+			amountStr, _ := r["amount"].(string)
+			voter := common.HexToAddress(voterStr)
+			amount, err := hexutil.DecodeBig(amountStr)
+			if err != nil {
+				log.Error("Failed to parse vote reward amount", "err", err, "amount", amountStr)
+				continue
+			}
+			amountU256, overflow := uint256.FromBig(amount)
+			if overflow {
+				log.Error("Vote reward amount overflow", "amount", amountStr)
+				continue
+			}
+			rewards = append(rewards, VoteReward{
+				Voter:  voter,
+				Amount: amountU256,
+			})
+		}
+	} else {
+		log.Error("Invalid vote rewards format", "type", fmt.Sprintf("%T", rewardsData))
+		return
+	}
+
+	beacon.voteRewardsMu.Lock()
+	defer beacon.voteRewardsMu.Unlock()
+
+	beacon.voteRewards[blockNumber] = rewards
+	log.Info("Set vote rewards for block", "block_number", blockNumber, "count", len(rewards))
+	for i, r := range rewards {
+		log.Info("Vote reward detail", "block_number", blockNumber, "index", i, "voter", r.Voter.Hex(), "amount", r.Amount)
+	}
 }
 
 // isPostMerge reports whether the given block number is assumed to be post-merge.
@@ -121,6 +236,9 @@ func (beacon *Beacon) VerifyHeader(chain consensus.ChainHeaderReader, header *ty
 		return consensus.ErrInvalidTerminalBlock
 	}
 	cfg := chain.Config()
+	if cfg.DolphinetPoSBlock != nil && header.Number.Cmp(cfg.DolphinetPoSBlock) < 0 {
+		return beacon.ethone.VerifyHeader(chain, header)
+	}
 	// Check >0 TDs with pre-merge, --0 TDs with post-merge rules
 	if header.Difficulty.Sign() > 0 ||
 		// OP-Stack: transitioned networks must use legacy consensus pre-Bedrock
@@ -142,11 +260,28 @@ func (beacon *Beacon) splitBedrockHeaders(chain consensus.ChainHeaderReader, hea
 	return headers, nil
 }
 
+func (beacon *Beacon) splitDolphinetPoSHeaders(chain consensus.ChainHeaderReader, headers []*types.Header) ([]*types.Header, []*types.Header) {
+	cfg := chain.Config()
+	if cfg.DolphinetPoSBlock == nil {
+		return nil, headers
+	}
+	for i, h := range headers {
+		if h.Number.Cmp(cfg.DolphinetPoSBlock) >= 0 {
+			return headers[:i], headers[i:]
+		}
+	}
+	return headers, nil
+}
+
 // splitHeaders splits the provided header batch into two parts according to
 // the difficulty field.
 //
 // Note, this function will not verify the header validity but just split them.
 func (beacon *Beacon) splitHeaders(chain consensus.ChainHeaderReader, headers []*types.Header) ([]*types.Header, []*types.Header) {
+	cfg := chain.Config()
+	if cfg.IsOptimism() && cfg.DolphinetPoSBlock != nil {
+		return beacon.splitDolphinetPoSHeaders(chain, headers)
+	}
 	if chain.Config().IsOptimism() {
 		return beacon.splitBedrockHeaders(chain, headers)
 	}
@@ -351,12 +486,48 @@ func (beacon *Beacon) Prepare(chain consensus.ChainHeaderReader, header *types.H
 	return nil
 }
 
+func getCallerInfo() string {
+	pc := make([]uintptr, 10)
+	n := runtime.Callers(3, pc)
+	frames := runtime.CallersFrames(pc[:n])
+
+	var callers []string
+	for {
+		frame, more := frames.Next()
+		if !more {
+			break
+		}
+		if !strings.Contains(frame.Function, "runtime.") && !strings.Contains(frame.Function, "reflect.") {
+			callers = append(callers, fmt.Sprintf("%s:%d", frame.Function, frame.Line))
+			if len(callers) >= 3 {
+				break
+			}
+		}
+	}
+	if len(callers) > 0 {
+		return strings.Join(callers, " <- ")
+	}
+	return "unknown"
+}
+
 // Finalize implements consensus.Engine and processes withdrawals on top.
 func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	if !beacon.IsPoSHeader(header) {
 		beacon.ethone.Finalize(chain, header, state, body)
 		return
 	}
+	cfg := chain.Config()
+	if cfg.DolphinetPoSBlock != nil && header.Number.Cmp(cfg.DolphinetPoSBlock) < 0 {
+		for _, w := range body.Withdrawals {
+			amount := new(uint256.Int).SetUint64(w.Amount)
+			amount = amount.Mul(amount, uint256.NewInt(params.DOLGWei))
+			state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
+		}
+		return
+	}
+	blockNumber := header.Number.Uint64()
+	callerInfo := getCallerInfo()
+
 	// Withdrawals processing.
 	for _, w := range body.Withdrawals {
 		// Convert amount from gwei to wei.
@@ -364,7 +535,89 @@ func (beacon *Beacon) Finalize(chain consensus.ChainHeaderReader, header *types.
 		amount = amount.Mul(amount, uint256.NewInt(params.DOLGWei))
 		state.AddBalance(w.Address, amount, tracing.BalanceIncreaseWithdrawal)
 	}
-	// No block reward which is issued by consensus layer instead.
+
+	var validatorAddr common.Address
+
+	validatorAddr = decodeValidatorAddressFromExtra(header)
+	if validatorAddr != (common.Address{}) {
+		state.AddBalance(validatorAddr, dolphinetBlockReward, tracing.BalanceIncreaseRewardMineBlock)
+		log.Debug("Block reward paid to validator", "block_number", blockNumber, "validator", validatorAddr)
+	}
+
+	isFromFinalizeAndAssemble := strings.Contains(callerInfo, "FinalizeAndAssemble")
+	isFromStateProcessor := strings.Contains(callerInfo, "StateProcessor")
+
+	beacon.voteRewardsMu.Lock()
+	rewards, hasRewards := beacon.voteRewards[blockNumber]
+	alreadyApplied := beacon.appliedVoteRewards[blockNumber]
+
+	shouldApply := hasRewards && (!alreadyApplied || isFromStateProcessor)
+	if shouldApply {
+		if !isFromFinalizeAndAssemble {
+			beacon.appliedVoteRewards[blockNumber] = true
+		}
+
+		if isFromFinalizeAndAssemble {
+			const keepRecentBlocks = 100
+			var keepFromBlock uint64 = 0
+			if blockNumber > keepRecentBlocks {
+				keepFromBlock = blockNumber - keepRecentBlocks
+			}
+
+			cleanedCount := 0
+			for oldBlockNum := range beacon.voteRewards {
+				if oldBlockNum < keepFromBlock && beacon.appliedVoteRewards[oldBlockNum] {
+					delete(beacon.voteRewards, oldBlockNum)
+					delete(beacon.appliedVoteRewards, oldBlockNum)
+					cleanedCount++
+				}
+			}
+			if cleanedCount > 0 {
+				log.Info("Cleaned up old vote rewards while producing new block",
+					"current_block", blockNumber,
+					"keep_from_block", keepFromBlock,
+					"cleaned_count", cleanedCount)
+			}
+		}
+
+		beacon.voteRewardsMu.Unlock()
+		for _, reward := range rewards {
+			state.AddBalance(reward.Voter, reward.Amount, tracing.BalanceIncreaseRewardMineBlock)
+			log.Debug("Vote reward paid to voter in Finalize", "block_number", blockNumber, "voter", reward.Voter.Hex(), "amount", reward.Amount)
+		}
+		log.Info("Vote rewards distributed in Finalize", "block_number", blockNumber, "count", len(rewards))
+	} else if alreadyApplied {
+		beacon.voteRewardsMu.Unlock()
+		log.Debug("Vote rewards already applied for block in Finalize, skipping", "block_number", blockNumber, "caller", callerInfo)
+	} else {
+		beacon.voteRewardsMu.Unlock()
+		if isFromStateProcessor && !hasRewards {
+			if beacon.peerRPCService != nil {
+				var fetchedRewards []VoteReward
+				ctx := context.Background()
+				blockNumberHex := hexutil.Uint64(blockNumber)
+				err := beacon.peerRPCService.CallContext(ctx, &fetchedRewards, "beacon_getVoteRewards", blockNumberHex)
+				if err != nil {
+					log.Warn("Failed to fetch vote rewards from peer node", "block_number", blockNumber, "err", err, "method", "beacon_getVoteRewards")
+				}
+				if err == nil && len(fetchedRewards) > 0 {
+					beacon.voteRewardsMu.Lock()
+					beacon.voteRewards[blockNumber] = fetchedRewards
+					beacon.voteRewardsMu.Unlock()
+					log.Debug("Fetched vote rewards from peer node", "block_number", blockNumber, "count", len(fetchedRewards))
+					for _, reward := range fetchedRewards {
+						state.AddBalance(reward.Voter, reward.Amount, tracing.BalanceIncreaseRewardMineBlock)
+					}
+					return
+				} else if err != nil {
+					log.Debug("Failed to fetch vote rewards from peer node", "block_number", blockNumber, "err", err)
+				}
+			}
+			log.Warn("No vote rewards found for block in Finalize during validation - state root may not match", "block_number", blockNumber, "caller", callerInfo, "header_root", header.Root.Hex())
+		} else {
+			log.Debug("No vote rewards found for block in Finalize", "block_number", blockNumber, "caller", callerInfo)
+		}
+	}
 }
 
 // FinalizeAndAssemble implements consensus.Engine, setting the final state and
@@ -384,11 +637,40 @@ func (beacon *Beacon) FinalizeAndAssemble(chain consensus.ChainHeaderReader, hea
 			return nil, errors.New("withdrawals set before Shanghai activation")
 		}
 	}
-	// Finalize and assemble the block.
+
+	blockNumber := header.Number.Uint64()
+	var validatorAddr common.Address
+	encodeValidatorAddressToExtra(header, validatorAddr)
+	if chain.Config().IsDolphinetPoS(header.Number) && beacon.nodeRPCService != nil {
+		ctx := context.Background()
+		blockNumberHex := hexutil.Uint64(blockNumber)
+		err := beacon.nodeRPCService.CallContext(ctx, &validatorAddr, "opnode_getValidatorForBlock", blockNumberHex)
+		if err == nil && validatorAddr != (common.Address{}) {
+			encodeValidatorAddressToExtra(header, validatorAddr)
+			log.Debug("Set validator address in header.Extra", "block_number", blockNumber, "validator", validatorAddr)
+		} else if err != nil {
+			log.Warn("Failed to get validator address from dn-node in FinalizeAndAssemble", "block_number", blockNumber, "err", err)
+			encodeValidatorAddressToExtra(header, common.Address{})
+		} else {
+			encodeValidatorAddressToExtra(header, common.Address{})
+		}
+	} else {
+		encodeValidatorAddressToExtra(header, common.Address{})
+		if !chain.Config().IsDolphinetPoS(header.Number) {
+			log.Debug("Block before Dolphinet PoS activation, no validator in Extra", "block_number", blockNumber)
+		} else {
+			log.Debug("nodeRPCService is nil, setting Extra to 32 bytes without validator address", "block_number", blockNumber)
+		}
+	}
+
+	beacon.voteRewardsMu.Lock()
+	delete(beacon.appliedVoteRewards, blockNumber)
+	beacon.voteRewardsMu.Unlock()
+
 	beacon.Finalize(chain, header, state, body)
 
-	// Assign the final state root to header.
-	header.Root = state.IntermediateRoot(true)
+	stateRoot := state.IntermediateRoot(true)
+	header.Root = stateRoot
 
 	if chain.Config().IsOptimismIsthmus(header.Time) {
 		if body.Withdrawals == nil || len(body.Withdrawals) > 0 { // We verify nil/empty withdrawals in the CL pre-Isthmus
@@ -483,7 +765,42 @@ func (beacon *Beacon) CalcDifficulty(chain consensus.ChainHeaderReader, time uin
 
 // APIs implements consensus.Engine, returning the user facing RPC APIs.
 func (beacon *Beacon) APIs(chain consensus.ChainHeaderReader) []rpc.API {
-	return beacon.ethone.APIs(chain)
+	apis := beacon.ethone.APIs(chain)
+	voteRewardAPI := rpc.API{
+		Namespace: "beacon",
+		Version:   "1.0",
+		Service:   &voteRewardAPI{beacon: beacon},
+		Public:    true,
+	}
+	apis = append(apis, voteRewardAPI)
+	return apis
+}
+
+// voteRewardAPI provides RPC methods for vote rewards
+type voteRewardAPI struct {
+	beacon *Beacon
+}
+
+// GetVoteRewards returns vote rewards for a given block number
+// This is used by replica nodes to fetch vote rewards from validator nodes
+func (api *voteRewardAPI) GetVoteRewards(blockNumber hexutil.Uint64) ([]VoteReward, error) {
+	api.beacon.voteRewardsMu.RLock()
+	defer api.beacon.voteRewardsMu.RUnlock()
+
+	rewards, hasRewards := api.beacon.voteRewards[uint64(blockNumber)]
+	if !hasRewards {
+		return nil, fmt.Errorf("no vote rewards found for block %d", blockNumber)
+	}
+
+	// Return a copy of the rewards
+	result := make([]VoteReward, len(rewards))
+	for i, reward := range rewards {
+		result[i] = VoteReward{
+			Voter:  reward.Voter,
+			Amount: reward.Amount.Clone(),
+		}
+	}
+	return result, nil
 }
 
 // Close shutdowns the consensus engine

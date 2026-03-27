@@ -357,14 +357,14 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 		}
 		state.StartPrefetcher("miner", bundle)
 	}
-	// Note the passed coinbase may be different with header.Coinbase.
+	vmCfg := *miner.chain.GetVMConfig()
 	return &environment{
 		signer:   types.MakeSigner(miner.chainConfig, header.Number, header.Time),
 		state:    state,
 		coinbase: coinbase,
 		header:   header,
 		witness:  state.Witness(),
-		evm:      vm.NewEVM(core.NewEVMBlockContext(header, miner.chain, &coinbase, miner.chainConfig, state), state, miner.chainConfig, vm.Config{}),
+		evm:      vm.NewEVM(core.NewEVMBlockContext(header, miner.chain, &coinbase, miner.chainConfig, state), state, miner.chainConfig, vmCfg),
 		rpcCtx:   rpcCtx,
 	}, nil
 }

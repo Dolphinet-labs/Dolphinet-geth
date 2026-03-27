@@ -30,6 +30,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/beacon"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
@@ -109,6 +110,7 @@ type Ethereum struct {
 	// OP-Stack additions
 	seqRPCService        *rpc.Client
 	historicalRPCService *rpc.Client
+	nodeRPCService       *rpc.Client // RPC client to dn-node for P2P transaction forwarding
 
 	interopRPC *interop.InteropClient
 
@@ -224,7 +226,10 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if config.VMTrace != "" {
 		traceConfig := json.RawMessage("{}")
 		if config.VMTraceJsonConfig != "" {
+			log.Info("Using VMTrace config", "tracer", config.VMTrace, "config", config.VMTraceJsonConfig)
 			traceConfig = json.RawMessage(config.VMTraceJsonConfig)
+		} else {
+			log.Warn("VMTrace enabled but no config provided", "tracer", config.VMTrace)
 		}
 		t, err := tracers.LiveDirectory.New(config.VMTrace, traceConfig)
 		if err != nil {
@@ -264,12 +269,30 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if config.OverrideOptimismInterop != nil {
 		overrides.OverrideOptimismInterop = config.OverrideOptimismInterop
 	}
+
+	if config.DolphinetPoSBlock != nil {
+		if *config.DolphinetPoSBlock == 0 {
+			zero := uint64(0)
+			overrides.OverrideDolphinetPoSBlock = &zero
+			log.Info("DolphinetPoSBlock override set to 0 via overrides")
+		} else {
+			v := *config.DolphinetPoSBlock
+			overrides.OverrideDolphinetPoSBlock = &v
+			log.Info("DolphinetPoSBlock override set via overrides", "posBlock", *config.DolphinetPoSBlock)
+		}
+	}
 	overrides.ApplySuperchainUpgrades = config.ApplySuperchainUpgrades
 
 	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, config.Genesis, &overrides, eth.engine, vmConfig, &config.TransactionHistory)
 	if err != nil {
 		return nil, err
 	}
+
+	if config.DolGovernanceContractAddr == "" {
+		log.Warn("DolGovernanceContractAddr is empty; validator exemption may break consensus")
+	}
+	validatorChecker := core.NewContractValidatorChecker(common.HexToAddress(config.DolGovernanceContractAddr))
+	eth.blockchain.SetValidatorChecker(validatorChecker)
 
 	if chainConfig := eth.blockchain.Config(); chainConfig.Optimism != nil { // config.Genesis.Config.ChainID cannot be used because it's based on CLI flags only, thus default to mainnet L1
 		config.NetworkId = chainConfig.ChainID.Uint64() // optimism defaults eth network ID to chain ID
@@ -358,11 +381,17 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 	eth.miner.SetPrioAddresses(config.TxPool.Locals)
 
-	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, config.RollupDisableTxPoolAdmission, eth, nil}
+	eth.APIBackend = &EthAPIBackend{extRPCEnabled: stack.Config().ExtRPCEnabled(), allowUnprotectedTxs: stack.Config().AllowUnprotectedTxs, disableTxPool: config.RollupDisableTxPoolAdmission, eth: eth}
 	if eth.APIBackend.allowUnprotectedTxs {
 		log.Info("Unprotected transactions allowed")
 	}
 	eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, config.GPO, config.Miner.GasPrice)
+
+	eth.APIBackend.validatorChecker = validatorChecker
+
+	eth.APIBackend.contractDeploymentFeeCalculator = core.NewContractDeploymentFeeCalculator(
+		big.NewInt(100),
+	)
 
 	if config.RollupSequencerHTTP != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -386,6 +415,33 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	if config.InteropMessageRPC != "" {
 		eth.interopRPC = interop.NewInteropClient(config.InteropMessageRPC)
+	}
+
+	if config.RollupNodeRPC != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := rpc.DialContext(ctx, config.RollupNodeRPC)
+		cancel()
+		if err != nil {
+			return nil, err
+		}
+		eth.nodeRPCService = client
+		// Set nodeRPCService in the consensus engine so it can query validator addresses
+		if beaconEngine, ok := engine.(*beacon.Beacon); ok {
+			beaconEngine.SetNodeRPCService(client)
+		}
+	}
+
+	if config.RollupSequencerHTTP != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		client, err := rpc.DialContext(ctx, config.RollupSequencerHTTP)
+		cancel()
+		if err != nil {
+			log.Warn("Failed to connect to validator RPC", "endpoint", config.RollupSequencerHTTP, "err", err)
+		} else {
+			if beaconEngine, ok := engine.(*beacon.Beacon); ok {
+				beaconEngine.SetPeerRPCService(client)
+			}
+		}
 	}
 
 	// Start the RPC service

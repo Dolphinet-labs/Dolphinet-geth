@@ -75,11 +75,14 @@ func DecodeHolocene1559Params(params []byte) (uint64, uint64) {
 //
 // Returns 0,0 if the format is invalid, though ValidateHoloceneExtraData should be used instead of this function for
 // validity checking.
+// Dolphinet: Allow 32 bytes ExtraData (9 bytes EIP-1559 params + 20 bytes validator address + 3 bytes padding)
+// Only decode the first 9 bytes (EIP-1559 parameters)
 func DecodeHoloceneExtraData(extra []byte) (uint64, uint64) {
-	if len(extra) != 9 {
+	const eip1559ParamsSize = 9
+	if len(extra) < eip1559ParamsSize {
 		return 0, 0
 	}
-	return DecodeHolocene1559Params(extra[1:])
+	return DecodeHolocene1559Params(extra[1:eip1559ParamsSize])
 }
 
 // EncodeHolocene1559Params encodes the eip-1559 parameters into 'PayloadAttributes.EIP1559Params' format. Will panic if
@@ -123,13 +126,18 @@ func ValidateHolocene1559Params(params []byte) error {
 // ValidateHoloceneExtraData checks if the header extraData is valid according to the Holocene
 // upgrade.
 func ValidateHoloceneExtraData(extra []byte) error {
-	if len(extra) != 9 {
-		return fmt.Errorf("holocene extraData should be 9 bytes, got %d", len(extra))
+	const maximumExtraDataSize = 32
+	const eip1559ParamsSize = 9
+	if len(extra) < eip1559ParamsSize {
+		return fmt.Errorf("holocene extraData should be at least %d bytes (EIP-1559 params), got %d", eip1559ParamsSize, len(extra))
+	}
+	if len(extra) > maximumExtraDataSize {
+		return fmt.Errorf("holocene extraData should be at most %d bytes, got %d", maximumExtraDataSize, len(extra))
 	}
 	if extra[0] != 0 {
 		return fmt.Errorf("holocene extraData should have 0 version byte, got %d", extra[0])
 	}
-	return ValidateHolocene1559Params(extra[1:])
+	return ValidateHolocene1559Params(extra[1:eip1559ParamsSize])
 }
 
 // CalcBaseFee calculates the basefee of the header.

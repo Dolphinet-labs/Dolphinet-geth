@@ -27,6 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -35,8 +36,9 @@ import (
 //
 // StateProcessor implements Processor.
 type StateProcessor struct {
-	config *params.ChainConfig // Chain configuration options
-	chain  *HeaderChain        // Canonical header chain
+	config           *params.ChainConfig // Chain configuration options
+	chain            *HeaderChain        // Canonical header chain
+	validatorChecker ValidatorChecker    // Validator checker for contract deployment fee
 }
 
 // NewStateProcessor initialises a new StateProcessor.
@@ -44,6 +46,14 @@ func NewStateProcessor(config *params.ChainConfig, chain *HeaderChain) *StatePro
 	return &StateProcessor{
 		config: config,
 		chain:  chain,
+	}
+}
+
+func NewStateProcessorWithValidatorChecker(config *params.ChainConfig, chain *HeaderChain, validatorChecker ValidatorChecker) *StateProcessor {
+	return &StateProcessor{
+		config:           config,
+		chain:            chain,
+		validatorChecker: validatorChecker,
 	}
 }
 
@@ -97,7 +107,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		}
 		statedb.SetTxContext(tx.Hash(), i)
 
-		receipt, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, tx, usedGas, evm)
+		receipt, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, tx, usedGas, evm, p.validatorChecker)
 		if err != nil {
 			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
@@ -143,7 +153,14 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // ApplyTransactionWithEVM attempts to apply a transaction to the given state database
 // and uses the input parameters for its environment similar to ApplyTransaction. However,
 // this method takes an already created EVM instance as input.
-func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, err error) {
+func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, tx *types.Transaction, usedGas *uint64, evm *vm.EVM, validatorChecker ValidatorChecker) (receipt *types.Receipt, err error) {
+	if evm != nil && tx != nil {
+		log.Debug("ApplyTransactionWithEVM validatorChecker status",
+			"tx", tx.Hash().Hex(),
+			"blockNumber", blockNumber.Uint64(),
+			"validatorCheckerNil", validatorChecker == nil,
+		)
+	}
 	if hooks := evm.Config.Tracer; hooks != nil {
 		if hooks.OnTxStart != nil {
 			hooks.OnTxStart(evm.GetVMContext(), tx, msg.From)
@@ -156,6 +173,12 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 	nonce := tx.Nonce()
 	if msg.IsDepositTx && evm.ChainConfig().IsOptimismRegolith(evm.Context.Time) {
 		nonce = statedb.GetNonce(msg.From)
+	}
+
+	if msg.To == nil {
+		if err := chargeContractDeploymentFeeIfNeeded(evm, msg.From, statedb, validatorChecker, blockNumber.Uint64()); err != nil {
+			return nil, fmt.Errorf("contract deployment fee charge failed: %w", err)
+		}
 	}
 
 	// Apply the transaction to the current state (included in the env).
@@ -233,8 +256,13 @@ func ApplyTransaction(evm *vm.EVM, gp *GasPool, statedb *state.StateDB, header *
 	if err != nil {
 		return nil, err
 	}
-	// Create a new context to be used in the EVM environment
-	return ApplyTransactionWithEVM(msg, gp, statedb, header.Number, header.Hash(), tx, usedGas, evm)
+	var checker ValidatorChecker
+	if evm != nil && evm.Config.ValidatorChecker != nil {
+		if c, ok := evm.Config.ValidatorChecker.(ValidatorChecker); ok {
+			checker = c
+		}
+	}
+	return ApplyTransactionWithEVM(msg, gp, statedb, header.Number, header.Hash(), tx, usedGas, evm, checker)
 }
 
 // ProcessBeaconBlockRoot applies the EIP-4788 system call to the beacon block root

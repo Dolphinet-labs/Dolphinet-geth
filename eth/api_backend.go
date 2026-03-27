@@ -54,6 +54,10 @@ type EthAPIBackend struct {
 	disableTxPool       bool
 	eth                 *Ethereum
 	gpo                 *gasprice.Oracle
+
+	// Contract deployment fee components
+	validatorChecker                core.ValidatorChecker
+	contractDeploymentFeeCalculator *core.ContractDeploymentFeeCalculator
 }
 
 // ChainConfig returns the active chain configuration.
@@ -287,6 +291,12 @@ func (b *EthAPIBackend) GetEVM(ctx context.Context, state *state.StateDB, header
 	if vmConfig == nil {
 		vmConfig = b.eth.blockchain.GetVMConfig()
 	}
+	if b.validatorChecker != nil {
+		vmConfig.ValidatorChecker = b.validatorChecker
+	}
+	if b.contractDeploymentFeeCalculator != nil {
+		vmConfig.ContractDeploymentFeeCalculator = b.contractDeploymentFeeCalculator
+	}
 	var context vm.BlockContext
 	if blockCtx != nil {
 		context = *blockCtx
@@ -317,8 +327,33 @@ func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction)
 		return types.ErrTxTypeNotSupported
 	}
 
-	// OP-Stack: forward to remote sequencer RPC
-	if b.eth.seqRPCService != nil {
+	if b.eth.txPool != nil {
+		if existingTx := b.eth.txPool.Get(signedTx.Hash()); existingTx != nil {
+			log.Debug("Transaction already in txpool", "hash", signedTx.Hash())
+			return nil
+		}
+	}
+
+	if b.eth.nodeRPCService != nil {
+		if !b.disableTxPool {
+			if err := b.sendTx(ctx, signedTx); err != nil {
+				log.Warn("Failed to add transaction to txpool", "hash", signedTx.Hash(), "err", err)
+			}
+		}
+
+		txData, err := signedTx.MarshalBinary()
+		if err != nil {
+			return err
+		}
+		txHex := hexutil.Encode(txData)
+		if err := b.eth.nodeRPCService.CallContext(ctx, nil, "opnode_publishTransactions", []string{txHex}); err != nil {
+			log.Warn("Failed to forward transaction via dn-node", "hash", signedTx.Hash(), "err", err)
+			return err
+		}
+		log.Debug("Forwarded transaction via dn-node", "hash", signedTx.Hash())
+		return nil
+	} else if b.eth.seqRPCService != nil {
+		// Legacy RPC forwarding mode (for non-PoS or old configuration)
 		data, err := signedTx.MarshalBinary()
 		if err != nil {
 			return err
@@ -512,4 +547,12 @@ func (b *EthAPIBackend) Genesis() *types.Block {
 
 func (b *EthAPIBackend) TxPoolPriceLimit() uint64 {
 	return b.eth.txPool.GasTip
+}
+
+func (b *EthAPIBackend) ValidatorChecker() core.ValidatorChecker {
+	return b.validatorChecker
+}
+
+func (b *EthAPIBackend) ContractDeploymentFeeCalculator() *core.ContractDeploymentFeeCalculator {
+	return b.contractDeploymentFeeCalculator
 }

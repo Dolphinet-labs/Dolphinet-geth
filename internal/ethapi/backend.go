@@ -87,6 +87,10 @@ type Backend interface {
 
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
+
+	// Contract deployment fee API
+	ValidatorChecker() core.ValidatorChecker
+	ContractDeploymentFeeCalculator() *core.ContractDeploymentFeeCalculator
 	HistoryPruningCutoff() uint64
 	HistoricalRPCService() *rpc.Client
 	Genesis() *types.Block
