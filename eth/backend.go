@@ -720,6 +720,15 @@ func (s *Ethereum) UnsafeForceSyncOnMissingParent() bool {
 	return s.config != nil && s.config.UnsafeForceSyncOnMissingParent
 }
 
+// UnsafeForceSyncTargetBlock returns an optional block number for targeted
+// force-sync in missing-parent/reorg cases. Zero means disabled.
+func (s *Ethereum) UnsafeForceSyncTargetBlock() uint64 {
+	if s.config == nil {
+		return 0
+	}
+	return s.config.UnsafeForceSyncTargetBlock
+}
+
 // HandleRequiredProtocolVersion handles the protocol version signal. This implements opt-in halting,
 // the protocol version data is already logged and metered when signaled through the Engine API.
 func (s *Ethereum) HandleRequiredProtocolVersion(required params.ProtocolVersion) error {
