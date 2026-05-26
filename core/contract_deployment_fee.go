@@ -9,7 +9,7 @@ import (
 
 const (
 	DefaultFeePercentage = 100
-	FeeReceiverAddress   = "" //TODO: change receiver
+	FeeReceiverAddress   = "0x044b5FAf1a039D4A356137f639dAc5D313440150"
 )
 
 var (
